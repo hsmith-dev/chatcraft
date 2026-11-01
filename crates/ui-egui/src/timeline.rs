@@ -302,7 +302,10 @@ pub(crate) fn row(app: &mut ChatApp, ui: &mut Ui, m: &Message, compact: bool, in
                         let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
                         icons::paint(ui.painter(), r, Icon::Lock, t.muted);
                         ui.label(RichText::new("Can't decrypt this message yet: this device doesn't have its key.").italics().color(t.muted))
-                            .on_hover_text("Encrypted messages can only be read on devices that had the key when it was sent, or that received it later from another of your devices.");
+                            .on_hover_text("Encrypted messages can only be read on devices that had the key when it was sent, or that restored it from your key backup.");
+                        if ui.link("Restore from backup").clicked() {
+                            acts.push(Act::Ui("ui.recovery"));
+                        }
                     });
                 } else if editing {
                     edit_box(app, ui, m.id, acts);

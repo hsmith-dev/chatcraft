@@ -5,6 +5,7 @@ mod info;
 mod message;
 mod nav;
 mod profile;
+mod security;
 
 use std::sync::OnceLock;
 
@@ -20,6 +21,7 @@ pub fn all() -> Vec<CommandSpec> {
     v.extend(channel::commands());
     v.extend(nav::commands());
     v.extend(profile::commands());
+    v.extend(security::commands());
     v.extend(info::commands());
     v
 }

@@ -7,10 +7,10 @@ Ranked: work from the top. Each gap names the catalog command ids it unlocks, if
 **Direction (2026-11-01): ChatCraft is a Matrix client with end-to-end encryption** (see
 [matrix.md](matrix.md)). Gaps 0.x are the encryption work in progress and come first.
 
-0.1 **Device verification and cross-signing** (SAS emoji and QR), trust indicators per person and device, warnings for unverified devices.
-0.2 **Key backup and recovery** (encrypted server-side backup, recovery key), so new devices can read history; secret storage (4S).
+0.1 ~~Verifying people by emoji, cross-signing~~ (done, 2026-11-01). Still open: verifying your own devices, QR codes, identity-change warnings, a verified-devices-only trust option.
+0.2 ~~Key backup and recovery~~ (done, 2026-11-01). Still open: changing or resetting the recovery key from the UI, a passphrase alternative.
 0.3 **OS keychain** for the store passphrase and access token (macOS Keychain, Windows Credential Manager, Secret Service).
-0.4 **Late keys**: retry decryption when a room key arrives after the message.
+0.4 ~~Late keys~~ (done: undecryptable messages are retried when keys arrive and after restoring).
 0.5 **Sign-in UI** (homeserver, user, password, SSO/OIDC) instead of command-line flags; sign out and device management.
 0.6 **Rich text from other clients**: render `formatted_body` HTML (bold, links, pills) instead of the plain body.
 0.7 **Matrix coverage**: room directory browsing, pins (`m.room.pinned_events`), saved items and mutes (account data / push rules), archiving (tombstones), history paging, typing and read receipts display.

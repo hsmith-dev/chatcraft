@@ -182,6 +182,26 @@ impl State {
             Event::SavedChanged { user, message, saved } => toggle(self.saved.entry(*user).or_default(), *message, *saved),
             Event::ChannelMuted { user, channel, muted } => toggle(self.muted.entry(*user).or_default(), *channel, *muted),
             Event::ChannelStarred { user, channel, starred } => toggle(self.starred.entry(*user).or_default(), *channel, *starred),
+            Event::MessageReplaced { message } => {
+                if let Some(old) = self.messages.remove(&message.id) {
+                    if let Some(tl) = self.timeline.get_mut(&old.channel) {
+                        tl.retain(|id| *id != old.id);
+                    }
+                    let mut m = message.clone();
+                    m.reply_count = old.reply_count;
+                    m.last_reply = old.last_reply;
+                    m.repliers = old.repliers;
+                    if m.reactions.is_empty() {
+                        m.reactions = old.reactions;
+                    }
+                    self.post(&m);
+                }
+            }
+            Event::UserVerified { user, verified } => {
+                if let Some(u) = self.users.get_mut(user) {
+                    u.verified = *verified;
+                }
+            }
         }
     }
 

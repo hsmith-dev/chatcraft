@@ -56,7 +56,7 @@ fn ui_commands_open_dialogs_and_panes() {
     h.state_mut().run("ui.toggleTheme", &json!({})).unwrap();
     h.run_steps(2);
     assert_eq!(h.state().tokens.mode, crate::Mode::Dark);
-    for id in ["ui.newChannel", "ui.browseChannels", "ui.newMessage", "ui.people", "ui.setStatus", "ui.shortcuts"] {
+    for id in ["ui.newChannel", "ui.browseChannels", "ui.newMessage", "ui.people", "ui.setStatus", "ui.shortcuts", "ui.recovery"] {
         h.state_mut().run(id, &json!({})).unwrap();
         h.run_steps(2);
         h.state_mut().run("ui.closeDialog", &json!({})).unwrap();
@@ -86,4 +86,23 @@ fn every_offered_emoji_has_a_glyph() {
         }
     }
     assert!(missing.is_empty(), "no glyph for:\n{}", missing.join("\n"));
+}
+
+/// `sas::UNDRAWABLE` lists exactly the SAS emoji the bundled fonts can't draw.
+#[test]
+fn sas_glyphs_are_known() {
+    let mut missing = Vec::new();
+    for g in crate::sas::TABLE {
+        let ok = std::panic::catch_unwind(|| {
+            let mut h = Harness::builder().with_size(egui::vec2(120.0, 60.0)).build_ui(|ui| {
+                ui.label(g);
+            });
+            h.run_steps(1);
+        })
+        .is_ok();
+        if !ok {
+            missing.push(g);
+        }
+    }
+    assert_eq!(missing, crate::sas::UNDRAWABLE.to_vec(), "update sas::UNDRAWABLE");
 }

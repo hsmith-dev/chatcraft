@@ -1,6 +1,6 @@
 # Matrix and end-to-end encryption
 
-_Status: 2026-11-01 · revision 1_
+_Status: 2026-11-01 · revision 2 (verification, key backup)_
 
 ChatCraft speaks **Matrix**, the open, federated chat standard, instead of a protocol of its own
 (the direction proposed in storytold/artcraft#2138). Any Matrix homeserver works — Synapse,
@@ -52,15 +52,35 @@ servers share a localpart. People not met yet can be invited by Matrix ID (`@bob
   device has no key (it joined later, or is a new device without key backup).
 - **Encryption is visible**: a shield marks encrypted conversations in the header and composer.
 
+### Verifying people (emoji comparison)
+
+- **Cross-signing** is set up on an account's first sign-in with a password, so each person has
+  one identity that vouches for all their devices.
+- **Verify** (profile pane, or `security.verify`) starts a Matrix SAS verification in your DM with
+  them. Both of you see the same seven emoji with names; you compare them out of band and press
+  *They match* (or *They don't match*, which cancels on both sides). Incoming requests open the
+  dialog automatically. Verified people carry a shield in profiles and member lists, and trust is
+  remembered across restarts. The integration test asserts both clients compute identical emoji.
+- The emoji's name is always shown; the four the bundled font can't draw (lion, unicorn,
+  butterfly, robot) show the name only, never a blank box (`ui-egui/src/sas.rs`).
+
+### Key backup and recovery
+
+- **Set up key backup** (profile menu › Encryption and key backup, or `security.setupRecovery`)
+  creates an encrypted server-side backup of room keys and a 12-word **recovery key** shown once.
+  New keys are backed up automatically from then on.
+- On a new device, **Restore** with the recovery key (`security.recover`): keys are downloaded
+  from the backup and messages shown as undecryptable are decrypted in place (same message,
+  replies and reactions kept). A wrong key is refused. A missing key is also looked up in the
+  backup automatically, and messages are re-tried whenever new keys arrive.
+
 ### Not done yet (see gaps.md)
 
-- **Device verification** (emoji/SAS, QR) and **cross-signing**: today keys are shared with every
-  device of the people in the room without verifying it (the SDK's default trust policy).
-- **Key backup and recovery** (server-side, encrypted with a recovery key), so a new device can
-  read history. Until then a new device can't read older encrypted messages.
+- Verifying **your own** devices (and QR-code verification); a stricter trust policy (only send
+  keys to verified devices) as an option; warnings when a verified person's identity changes.
 - Storing the store passphrase and access token in the OS keychain instead of files.
-- Re-trying decryption when a key arrives late; rendering `formatted_body` HTML from other
-  clients; room directory browsing; pins, saved items, muting, archiving over Matrix.
+- Rendering `formatted_body` HTML from other clients; room directory browsing; pins, saved
+  items, muting, archiving over Matrix.
 - Encrypted public channels are possible in Matrix but not offered: anyone may join them, so
   encryption adds little and breaks history for newcomers.
 
@@ -82,7 +102,13 @@ cd .. && CHATCRAFT_TEST_HOMESERVER=http://localhost:8008 CHATCRAFT_TEST_ALICE=al
   CHATCRAFT_TEST_BOB=bob:pw-bob cargo test -p chatcraft-matrix --test e2ee -- --nocapture
 ```
 
-It checks: a private channel is created encrypted; Bob (invited by Matrix ID) joins and decrypts;
+`crates/matrix/tests/verify.rs` needs a homeserver with open registration (test servers only:
+`enable_registration: true` and `enable_registration_without_verification: true` in
+`hs.yaml`) and `CHATCRAFT_TEST_REGISTER=1`; each run registers fresh accounts. It covers emoji
+verification both ways (identical emoji, confirm, mismatch, trust after restart) and key backup
+(a new device restores history with the recovery key; a wrong key is refused).
+
+`e2ee.rs` checks: a private channel is created encrypted; Bob (invited by Matrix ID) joins and decrypts;
 reactions, thread replies and edits arrive decrypted; the homeserver's stored events contain no
 plaintext; and after a restart Bob's device restores from its store and still reads the history.
 Synapse runs only as an external test process; ChatCraft contains no Synapse code.

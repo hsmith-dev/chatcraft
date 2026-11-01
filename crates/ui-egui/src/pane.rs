@@ -124,6 +124,11 @@ fn details(app: &mut ChatApp, ui: &mut Ui, acts: &mut Vec<Act>) {
                         if u.id == me {
                             ui.label(RichText::new("(you)").color(t.muted));
                         }
+                        if u.verified {
+                            let (r, resp) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                            icons::paint(ui.painter(), r, Icon::Shield, t.accent);
+                            resp.on_hover_text("Verified");
+                        }
                         if !u.title.is_empty() {
                             ui.label(RichText::new(&u.title).small().color(t.muted));
                         }
@@ -240,6 +245,15 @@ fn profile(app: &mut ChatApp, ui: &mut Ui, acts: &mut Vec<Act>) {
                 ui.label(RichText::new(&u.title).color(t.text));
             }
             ui.label(RichText::new(format!("@{} · {}", u.handle, u.presence.label())).color(t.muted));
+            if u.verified {
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                    icons::paint(ui.painter(), r, Icon::Shield, t.accent);
+                    ui.label(RichText::new("Verified").strong().color(t.accent));
+                })
+                .response
+                .on_hover_text("You compared emoji with this person: messages between you can't be intercepted.");
+            }
             if !u.status.text.is_empty() || !u.status.emoji.is_empty() {
                 let g = emoji::lookup(&u.status.emoji).unwrap_or("");
                 ui.add_space(6.0);
@@ -256,6 +270,15 @@ fn profile(app: &mut ChatApp, ui: &mut Ui, acts: &mut Vec<Act>) {
                 }
             } else if ui.button("Update your status").clicked() {
                 acts.push(Act::Ui("ui.setStatus"));
+            }
+            if Some(u.id) != app.session.me
+                && !u.verified
+                && ui
+                    .button("Verify identity")
+                    .on_hover_text("Compare emoji with them to make sure no one is intercepting your encrypted messages")
+                    .clicked()
+            {
+                acts.push(Act::Run("security.verify", json!({ "user": format!("@{}", u.handle) })));
             }
             if ui.button("Copy handle").clicked() {
                 acts.push(Act::Copy(format!("@{}", u.handle)));

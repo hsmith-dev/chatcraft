@@ -95,6 +95,31 @@ fn a_known_dm_stays_direct_when_m_direct_lags() {
 }
 
 #[test]
+fn undecryptable_messages_are_replaced_when_their_key_arrives() {
+    let mut m = Mapper::new(ME);
+    let c = room(&mut m, "!r:test", "secret", &[ME, "@bob:test"], true);
+    let enc = json!({"type": "m.room.encrypted", "event_id": "$u", "sender": "@bob:test", "origin_server_ts": 5, "content": {}});
+    m.timeline("!r:test", &enc, true, true);
+    let id = m.state().timeline(c)[0].id;
+    m.timeline("!r:test", &json!({"type": "m.reaction", "event_id": "$r", "sender": ME, "content": {"m.relates_to": {"rel_type": "m.annotation", "event_id": "$u", "key": "👀"}}}), true, false);
+    // Still no key: nothing changes.
+    m.timeline("!r:test", &enc, true, true);
+    assert!(m.state().message(id).unwrap().undecryptable);
+    // The key arrived: same id, now readable, reaction kept.
+    m.timeline("!r:test", &msg("$u", "@bob:test", "now you can read me"), true, false);
+    let msg = m.state().message(id).unwrap();
+    assert_eq!((msg.text.as_str(), msg.undecryptable, msg.encrypted), ("now you can read me", false, true));
+    assert_eq!(msg.reactions.len(), 1);
+    assert_eq!(m.state().timeline(c).len(), 1);
+    // A placeholder that decrypts to a reaction disappears from the timeline.
+    m.timeline("!r:test", &json!({"type": "m.room.encrypted", "event_id": "$u2", "sender": "@bob:test", "content": {}}), true, true);
+    assert_eq!(m.state().timeline(c).len(), 2);
+    m.timeline("!r:test", &json!({"type": "m.reaction", "event_id": "$u2", "sender": "@bob:test", "content": {"m.relates_to": {"rel_type": "m.annotation", "event_id": "$u", "key": "🎉"}}}), true, false);
+    assert_eq!(m.state().timeline(c).len(), 1);
+    assert_eq!(m.state().message(id).unwrap().reactions.len(), 2);
+}
+
+#[test]
 fn dms_handles_presence_status() {
     let mut m = Mapper::new(ME);
     let c = m.upsert_room(&RoomInfo {

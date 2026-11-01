@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc as tmpsc;
 
 use crate::mapper::{Mapper, RoomInfo, format_status};
+use crate::verify::{Change, Verifications};
 use crate::{MatrixConfig, Waker, set_status, wake};
 
 type R<T> = Result<T, String>;
@@ -61,12 +62,20 @@ fn write_private(path: &std::path::Path, contents: &str) -> R<()> {
 }
 
 /// Signs in, reusing this store's saved device when there is one (so its keys stay valid).
-async fn sign_in(cfg: &MatrixConfig) -> R<Client> {
+/// Returns the client and whether this was a fresh password sign-in (a new device).
+async fn sign_in(cfg: &MatrixConfig) -> R<(Client, bool)> {
     std::fs::create_dir_all(&cfg.store_dir).map_err(|e| format!("{}: {e}", cfg.store_dir.display()))?;
     let pass = secret_file(&cfg.store_dir.join("passphrase"))?;
     let client = Client::builder()
         .server_name_or_homeserver_url(&cfg.homeserver)
         .sqlite_store(cfg.store_dir.join("store"), Some(&pass))
+        // Once recovery is set up, room keys are backed up as they arrive, and a key missing on
+        // this device is looked up in the backup.
+        .with_encryption_settings(matrix_sdk::encryption::EncryptionSettings {
+            auto_enable_cross_signing: false,
+            backup_download_strategy: matrix_sdk::encryption::BackupDownloadStrategy::AfterDecryptionFailure,
+            auto_enable_backups: true,
+        })
         .build()
         .await
         .map_err(err)?;
@@ -75,7 +84,7 @@ async fn sign_in(cfg: &MatrixConfig) -> R<Client> {
         && let Ok(session) = serde_json::from_str::<MatrixSession>(&text)
     {
         match client.restore_session(session).await {
-            Ok(()) => return Ok(client),
+            Ok(()) => return Ok((client, false)),
             Err(e) => log::warn!("saved session rejected ({e}); signing in again"),
         }
     }
@@ -86,7 +95,7 @@ async fn sign_in(cfg: &MatrixConfig) -> R<Client> {
     if let Some(session) = client.matrix_auth().session() {
         write_private(&session_path, &serde_json::to_string(&session).map_err(err)?)?;
     }
-    Ok(client)
+    Ok((client, true))
 }
 
 /// The SDK's view of a room, as the mapper wants it.
@@ -131,6 +140,9 @@ struct Worker {
     problems: Vec<String>,
     /// Rooms this device marked as DMs, before `m.direct` comes back through sync.
     direct: std::collections::HashSet<String>,
+    verify: Verifications,
+    /// Frames other than events waiting to go out (verification updates).
+    outbox: Vec<ServerFrame>,
 }
 
 /// How many recent events of each conversation the welcome snapshot carries.
@@ -210,7 +222,104 @@ impl Worker {
         }
     }
 
+    /// A verification request someone sent us (in a room or to this device).
+    async fn incoming_request(&mut self, sender: &str, flow: &str) {
+        if self.verify.knows(flow) || sender == self.me.as_str() {
+            return;
+        }
+        let Ok(uid) = UserId::parse(sender) else { return };
+        if let Some(req) = self.client.encryption().get_verification_request(&uid, flow).await {
+            let user = self.map.user(sender, None);
+            if let Some(u) = self.verify.track(req, user) {
+                self.outbox.push(ServerFrame::Verification(u));
+            }
+        }
+    }
+
+    /// Whether the viewer has verified each person they can see.
+    async fn refresh_trust(&mut self) {
+        let people: Vec<String> = self.map.state().users.keys().filter_map(|u| self.map.mxid(*u)).map(str::to_string).collect();
+        for mxid in people {
+            let Ok(uid) = UserId::parse(mxid.as_str()) else { continue };
+            if uid == self.me {
+                continue;
+            }
+            if let Ok(Some(identity)) = self.client.encryption().get_user_identity(&uid).await {
+                self.map.set_verified(&mxid, identity.is_verified());
+            }
+        }
+    }
+
+    /// Tries again to decrypt messages shown as undecryptable (after a key arrived or the backup
+    /// was restored). `download`: fetch each room's keys from the backup first.
+    async fn retry_undecryptable(&mut self, download: bool) {
+        let utd: Vec<(String, String)> = self
+            .map
+            .state()
+            .messages
+            .values()
+            .filter(|m| m.undecryptable && !m.deleted)
+            .rev()
+            .take(200)
+            .filter_map(|m| Some((self.map.room_id(m.channel)?.to_string(), self.map.event_id(m.id)?.to_string())))
+            .collect();
+        if utd.is_empty() {
+            return;
+        }
+        if download {
+            let rooms: std::collections::BTreeSet<&String> = utd.iter().map(|(r, _)| r).collect();
+            for r in rooms {
+                if let Ok(rid) = RoomId::parse(r.as_str())
+                    && let Err(e) = self.client.encryption().backups().download_room_keys_for_room(&rid).await
+                {
+                    log::warn!("backup keys for {r}: {e}");
+                }
+            }
+        }
+        for (rid, eid) in utd {
+            let (Ok(r), Ok(e)) = (RoomId::parse(rid.as_str()), EventId::parse(eid.as_str())) else { continue };
+            let Some(room) = self.client.get_room(&r) else { continue };
+            if let Ok(ev) = room.event(&e, None).await {
+                self.timeline_event(&rid, &ev);
+            }
+        }
+    }
+
+    async fn on_verification(&mut self, change: Change) {
+        let out = self.verify.on_change(change).await;
+        if let Some((mxid, v)) = out.verified {
+            self.map.set_verified(&mxid, v);
+        }
+        if let Some(u) = out.update {
+            self.outbox.push(ServerFrame::Verification(u));
+        }
+    }
+
     async fn absorb_rooms(&mut self, r: &SyncResponse) {
+        let mut requests: Vec<(String, String)> = Vec::new();
+        for ev in &r.to_device {
+            let Ok(json) = serde_json::from_str::<Value>(ev.as_raw().json().get()) else { continue };
+            if json.get("type").and_then(Value::as_str) == Some("m.key.verification.request")
+                && let (Some(s), Some(f)) =
+                    (json.get("sender").and_then(Value::as_str), json.get("content").and_then(|c| c.get("transaction_id")).and_then(Value::as_str))
+            {
+                requests.push((s.to_string(), f.to_string()));
+            }
+        }
+        for up in r.rooms.joined.values() {
+            for ev in &up.timeline.events {
+                let Ok(json) = serde_json::from_str::<Value>(ev.raw().json().get()) else { continue };
+                let msgtype = json.get("content").and_then(|c| c.get("msgtype")).and_then(Value::as_str);
+                if msgtype == Some("m.key.verification.request")
+                    && let (Some(s), Some(e)) = (json.get("sender").and_then(Value::as_str), json.get("event_id").and_then(Value::as_str))
+                {
+                    requests.push((s.to_string(), e.to_string()));
+                }
+            }
+        }
+        for (sender, flow) in requests {
+            self.incoming_request(&sender, &flow).await;
+        }
         for (rid, up) in &r.rooms.joined {
             if let Some(room) = self.client.get_room(rid) {
                 let info = self.info(&room).await;
@@ -464,6 +573,38 @@ impl Worker {
                 self.client.send(req).await.map_err(err)?;
                 Ok(Value::Null)
             }
+            Op::VerifyUser { user } => {
+                let mxid = self.mxid(user)?;
+                let enc = self.client.encryption();
+                let identity = match enc.get_user_identity(&mxid).await.map_err(err)? {
+                    Some(i) => Some(i),
+                    None => enc.request_user_identity(&mxid).await.map_err(err)?,
+                };
+                let identity = identity.ok_or_else(|| format!("{mxid} hasn't set up an encryption identity (cross-signing) yet"))?;
+                let request = identity.request_verification().await.map_err(err)?;
+                let flow = request.flow_id().to_string();
+                if let Some(u) = self.verify.track(request, user) {
+                    self.outbox.push(ServerFrame::Verification(u));
+                }
+                Ok(json!({ "flow": flow }))
+            }
+            Op::Verification { flow, action } => {
+                if let Some(u) = self.verify.act(&flow, action).await? {
+                    self.outbox.push(ServerFrame::Verification(u));
+                }
+                Ok(Value::Null)
+            }
+            Op::SetUpRecovery => {
+                let key = self.client.encryption().recovery().enable().wait_for_backups_to_upload().await.map_err(err)?;
+                Ok(json!({ "recoveryKey": key }))
+            }
+            Op::Recover { key } => {
+                self.client.encryption().recovery().recover(key.trim()).await.map_err(|e| format!("that recovery key didn't work: {e}"))?;
+                self.retry_undecryptable(true).await;
+                self.refresh_trust().await;
+                let left = self.map.state().messages.values().filter(|m| m.undecryptable && !m.deleted).count();
+                Ok(json!({ "restored": true, "stillUndecryptable": left }))
+            }
             Op::Archive { .. } => Err("archiving isn't available on Matrix yet".into()),
             Op::Pin { .. } => Err("pinning isn't available on Matrix yet".into()),
             Op::Save { .. } => Err("saved items aren't available on Matrix yet".into()),
@@ -502,7 +643,7 @@ pub(crate) async fn run(
             None => return,
         }
     }
-    let client = match sign_in(&cfg).await {
+    let (client, fresh) = match sign_in(&cfg).await {
         Ok(c) => c,
         Err(e) => {
             set_status(&status, LinkStatus::Offline(format!("sign-in failed: {e}")));
@@ -511,8 +652,17 @@ pub(crate) async fn run(
         }
     };
     let Some(me) = client.user_id().map(ToOwned::to_owned) else { return };
-    let mut w =
-        Worker { map: Mapper::new(me.as_str()), client: client.clone(), me, cfg, problems: Vec::new(), direct: std::collections::HashSet::new() };
+    let (vtx, mut vrx) = tmpsc::unbounded_channel::<Change>();
+    let mut w = Worker {
+        map: Mapper::new(me.as_str()),
+        client: client.clone(),
+        me,
+        cfg,
+        problems: Vec::new(),
+        direct: std::collections::HashSet::new(),
+        verify: Verifications::new(vtx),
+        outbox: Vec::new(),
+    };
 
     // First sync from scratch (not from a saved token) so the snapshot carries recent history,
     // then the welcome; later syncs continue from this one's token.
@@ -533,6 +683,11 @@ pub(crate) async fn run(
             if let Some(c) = &catch_up {
                 w.absorb_rooms(c).await;
             }
+            // A new device of an account without cross-signing sets it up, so people can verify it.
+            if fresh && let Err(e) = crate::verify::bootstrap_cross_signing(&client, &w.cfg.user, &w.cfg.password).await {
+                w.problems.push(format!("couldn't set up cross-signing: {e}"));
+            }
+            w.refresh_trust().await;
         }
         Err(e) => {
             set_status(&status, LinkStatus::Offline(format!("sync failed: {e}")));
@@ -544,6 +699,7 @@ pub(crate) async fn run(
     let me_id = w.map.me().unwrap_or_default();
     set_status(&status, LinkStatus::Online);
     let mut hello = vec![ServerFrame::Welcome { me: me_id, state: Box::new(w.map.state().clone()) }];
+    hello.append(&mut w.outbox);
     hello.extend(w.problems.drain(..).map(|message| ServerFrame::Error { message }));
     if !send_frames(&in_tx, &waker, hello) {
         return;
@@ -582,6 +738,7 @@ pub(crate) async fn run(
                     Some(ClientFrame::Op { req, op }) => {
                         let r = w.op(op).await;
                         let mut frames: Vec<ServerFrame> = w.map.take().into_iter().map(ServerFrame::Event).collect();
+                        frames.append(&mut w.outbox);
                         frames.push(match r {
                             Ok(result) => ServerFrame::Ack { req, ok: true, result, error: None },
                             Err(e) => ServerFrame::Ack { req, ok: false, result: Value::Null, error: Some(e) },
@@ -596,10 +753,24 @@ pub(crate) async fn run(
                     return;
                 }
             }
+            v = vrx.recv() => {
+                let Some(v) = v else { continue };
+                w.on_verification(v).await;
+                let mut frames: Vec<ServerFrame> = w.map.take().into_iter().map(ServerFrame::Event).collect();
+                frames.append(&mut w.outbox);
+                if !send_frames(&in_tx, &waker, frames) {
+                    return;
+                }
+            }
             r = sync_rx.recv() => {
                 let Some(Ok(r)) = r else { continue };
                 w.absorb(&r).await;
+                // Room keys arrive as to-device messages: retry what couldn't be read.
+                if !r.to_device.is_empty() {
+                    w.retry_undecryptable(false).await;
+                }
                 let mut frames: Vec<ServerFrame> = w.map.take().into_iter().map(ServerFrame::Event).collect();
+                frames.append(&mut w.outbox);
                 frames.extend(w.problems.drain(..).map(|message| ServerFrame::Error { message }));
                 if !send_frames(&in_tx, &waker, frames) {
                     return;

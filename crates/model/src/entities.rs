@@ -86,6 +86,9 @@ pub struct User {
     pub joined: Ts,
     #[serde(default)]
     pub deactivated: bool,
+    /// The viewer has verified this person's identity (Matrix cross-signing, by emoji comparison).
+    #[serde(default)]
+    pub verified: bool,
 }
 
 impl User {

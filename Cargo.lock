@@ -883,6 +883,7 @@ dependencies = [
  "chatcraft-model",
  "chatcraft-proto",
  "chatcraft-text",
+ "futures-util",
  "getrandom 0.3.4",
  "log",
  "matrix-sdk",
