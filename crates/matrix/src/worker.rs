@@ -1084,8 +1084,9 @@ pub(crate) async fn run(
                         });
                         if w.signed_out {
                             let _ = send_frames(&in_tx, &waker, frames);
-                            forget_device(&w.cfg).await;
+                            // Report it first: whoever sees the store gone must also see "signed out".
                             set_status(&status, LinkStatus::Offline("signed out".into()));
+                            forget_device(&w.cfg).await;
                             wake(&waker);
                             return;
                         }
