@@ -1,20 +1,72 @@
-//! ChatCraft in the browser: the same `ChatApp` as the desktop, through eframe's web runner.
-//! M0 runs the demo workspace in-page; connecting to a server over the browser's WebSocket is a
-//! tracked gap (`docs/gaps.md`). Build with `trunk build --release` from this directory.
+//! ChatCraft in the browser: the same `Shell` and `ChatApp` as the desktop, through eframe's web
+//! runner, signing in to a Matrix homeserver from the page (IndexedDB store, end-to-end
+//! encryption in the browser) or opening the demo workspace.
+//!
+//! - `?demo` opens the demo workspace.
+//! - `#homeserver=matrix.example.org&user=alice` prefills the sign-in form (never a password).
+//! - A signed-in account is remembered in this browser (`localStorage`: homeserver and user name;
+//!   the device's session and store passphrase are kept there too, as other web clients do).
+//!
+//! Build with `trunk build --release` from this directory (output in `dist/web`).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-    use chatcraft_engine::Session;
-    use chatcraft_ui_egui::ChatApp;
+    use chatcraft_engine::{Loopback, Session};
+    use chatcraft_ui_egui::{Credentials, Shell, Start};
     use wasm_bindgen::JsCast;
 
-    struct App(ChatApp);
+    const ACCOUNT: &str = "chatcraft:account";
+
+    struct App(Shell);
 
     impl eframe::App for App {
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
             self.0.ui(ui);
         }
+    }
+
+    fn storage() -> Option<web_sys::Storage> {
+        web_sys::window()?.local_storage().ok()?
+    }
+
+    fn remembered() -> Option<Credentials> {
+        let v: serde_json::Value = serde_json::from_str(&storage()?.get_item(ACCOUNT).ok()??).ok()?;
+        Some(Credentials { homeserver: v.get("homeserver")?.as_str()?.into(), user: v.get("user")?.as_str()?.into(), password: String::new() })
+    }
+
+    fn remember(c: &Credentials) {
+        if let Some(s) = storage() {
+            let _ = s.set_item(ACCOUNT, &serde_json::json!({ "homeserver": c.homeserver, "user": c.user }).to_string());
+        }
+    }
+
+    fn forget() {
+        if let Some(s) = storage() {
+            let _ = s.remove_item(ACCOUNT);
+        }
+    }
+
+    /// `?demo`, and `#homeserver=…&user=…` for a prefilled form.
+    fn start_from_url() -> Start {
+        let location = web_sys::window().map(|w| w.location());
+        let search = location.as_ref().and_then(|l| l.search().ok()).unwrap_or_default();
+        if search.trim_start_matches('?').split('&').any(|p| p == "demo") {
+            return Start::Session(Box::new(Session::demo()));
+        }
+        if let Some(c) = remembered() {
+            return Start::Connect(c);
+        }
+        let hash = location.as_ref().and_then(|l| l.hash().ok()).unwrap_or_default();
+        let params = web_sys::UrlSearchParams::new_with_str(hash.trim_start_matches('#')).ok();
+        let get = |k: &str| params.as_ref().and_then(|p| p.get(k)).unwrap_or_default();
+        Start::SignIn(Credentials { homeserver: get("homeserver"), user: get("user"), password: String::new() })
+    }
+
+    fn connect(c: &Credentials) -> Result<Session, String> {
+        let cfg = chatcraft_matrix::MatrixConfig::new(&c.homeserver, &c.user, &c.password, std::path::PathBuf::new());
+        let link = chatcraft_matrix::MatrixTransport::connect(cfg)?;
+        Ok(Session::connect(Box::new(link), Loopback::hello(&c.user)))
     }
 
     pub fn start() {
@@ -34,9 +86,11 @@ mod web {
                     canvas,
                     eframe::WebOptions::default(),
                     Box::new(move |_cc| {
-                        let mut app = ChatApp::new(Session::demo());
-                        app.utc_offset_minutes = offset;
-                        Ok(Box::new(App(app)))
+                        let mut shell = Shell::new(start_from_url(), Box::new(connect));
+                        shell.on_signed_in = Some(Box::new(remember));
+                        shell.on_signed_out = Some(Box::new(forget));
+                        shell.utc_offset_minutes = offset;
+                        Ok(Box::new(App(shell)))
                     }),
                 )
                 .await;

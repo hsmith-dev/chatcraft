@@ -62,7 +62,7 @@ impl Verifications {
         let incoming = !request.we_started();
         let tx = self.tx.clone();
         let (f, r) = (flow.clone(), request.clone());
-        tokio::spawn(async move {
+        crate::rt::spawn(async move {
             let mut changes = r.changes();
             while let Some(state) = changes.next().await {
                 if tx.send(Change::Request(f.clone(), state)).is_err() {
@@ -78,7 +78,7 @@ impl Verifications {
     fn watch_sas(&mut self, flow: &str, sas: SasVerification) {
         let tx = self.tx.clone();
         let (f, s) = (flow.to_string(), sas.clone());
-        tokio::spawn(async move {
+        crate::rt::spawn(async move {
             let mut changes = s.changes();
             while let Some(state) = changes.next().await {
                 if tx.send(Change::Sas(f.clone(), state)).is_err() {

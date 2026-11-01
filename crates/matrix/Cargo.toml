@@ -14,12 +14,25 @@ chatcraft-model = { workspace = true }
 chatcraft-proto = { workspace = true }
 chatcraft-text = { workspace = true }
 chatcraft-engine = { workspace = true }
-matrix-sdk = { version = "0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs"] }
-tokio = { workspace = true }
 serde_json = { workspace = true }
 getrandom = { workspace = true }
 futures-util = { workspace = true }
 log = { workspace = true }
+# Channels and select! only (both work in the browser); the runtime is per target, below.
+tokio = { version = "1", default-features = false, features = ["sync", "macros"] }
+
+# Native: SQLite store, rustls, a Tokio runtime on a background thread.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+matrix-sdk = { version = "0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs"] }
+tokio = { workspace = true }
+
+# Browser: IndexedDB store, the browser's fetch and timers, futures on the page's event loop.
+[target.'cfg(target_family = "wasm")'.dependencies]
+matrix-sdk = { version = "0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "indexeddb"] }
+wasm-bindgen-futures = "0.4"
+gloo-timers = { version = "0.3", features = ["futures"] }
+web-sys = { version = "0.3", features = ["Window", "Storage"] }
+getrandom = { workspace = true, features = ["wasm_js"] }
 
 # The device's secrets (store passphrase, session) go to the OS keychain where there is one:
 # macOS Keychain, Windows Credential Manager, the Secret Service on Linux. MIT OR Apache-2.0.

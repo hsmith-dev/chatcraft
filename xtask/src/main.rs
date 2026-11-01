@@ -92,14 +92,14 @@ fn cmd_layers() -> Result<(), String> {
     }
 }
 
-/// Crates that must build for wasm32: L0–L4, the MCP crate and the egui front end.
+/// Crates that must build for wasm32: L0–L4, the MCP and Matrix crates and the egui front end.
 /// `net` (tokio sockets) is native-only by design.
 fn wasm_set() -> Result<Vec<String>, String> {
     let crates = layers::from_metadata(&metadata()?)?;
     Ok(crates
         .into_iter()
         .filter(|c| match layers::classify(&c.name) {
-            Some(layers::Class::Layer(l)) => l <= 4 || matches!(layers::short_name(&c.name), "ui-egui" | "mcp"),
+            Some(layers::Class::Layer(l)) => l <= 4 || matches!(layers::short_name(&c.name), "ui-egui" | "mcp" | "matrix"),
             Some(layers::Class::Standalone) => true,
             _ => false,
         })

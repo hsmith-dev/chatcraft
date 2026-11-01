@@ -14,6 +14,7 @@
 
 mod html;
 pub mod mapper;
+mod rt;
 mod secrets;
 mod verify;
 mod worker;
@@ -119,6 +120,9 @@ impl MatrixTransport {
         let status = Arc::new(Mutex::new(LinkStatus::Connecting));
         let waker: Waker = Arc::new(Mutex::new(None));
         let (st, wk) = (Arc::clone(&status), Arc::clone(&waker));
+        // Natively the worker gets its own thread and runtime; in the browser it runs on the
+        // page's event loop.
+        #[cfg(not(target_family = "wasm"))]
         std::thread::Builder::new()
             .name("chatcraft-matrix".into())
             .spawn(move || match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
@@ -126,6 +130,8 @@ impl MatrixTransport {
                 Err(e) => set_status(&st, LinkStatus::Offline(format!("runtime: {e}"))),
             })
             .map_err(|e| e.to_string())?;
+        #[cfg(target_family = "wasm")]
+        wasm_bindgen_futures::spawn_local(worker::run(cfg, out_rx, in_tx, st, wk));
         Ok(MatrixTransport { label, out, inbox, status, waker })
     }
 }
