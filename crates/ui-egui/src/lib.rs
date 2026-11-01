@@ -25,7 +25,7 @@ use chatcraft_engine::model::{ChannelId, MessageId, Ts, UserId};
 use egui::{Color32, Frame, Margin, Stroke, Ui};
 use serde_json::{Value, json};
 
-pub use shell::{Connect, Credentials, Shell, Start};
+pub use shell::{Connect, Credentials, Shell, SsoPoll, SsoStart, Start};
 pub use theme::{Mode, Tokens};
 
 /// UI-only commands: `(id, label, shortcut)`.

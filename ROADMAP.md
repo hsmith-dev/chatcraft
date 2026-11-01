@@ -24,7 +24,7 @@ end-to-end encryption instead of its own protocol. See [docs/matrix.md](docs/mat
 | | Milestone | Headline |
 |---|---|---|
 | ✅ | **M0 Foundations** | Layered workspace, event-sourced hub, journal, server, desktop/CLI/MCP/web, demo workspace |
-| 🟡 | **M1-E Matrix + E2EE** | Matrix transport, encrypted private channels and DMs, device store, emoji verification + cross-signing, key backup and recovery — **in progress**: own-device verification, SSO sign-in, Matrix coverage (pins, saved, mute, directory) next |
+| 🟡 | **M1-E Matrix + E2EE** | Matrix transport, encrypted private channels and DMs, device store, emoji verification + cross-signing, key backup and recovery — **in progress**: OIDC-native sign-in, QR verification, identity-change warnings next |
 | ⬜ | **M1 Daily driver** | Files and images, per-user auth, TLS, OS notifications, edit history, typing indicators, unread view, mark unread, reminders |
 | ⬜ | **M2 Teams-shaped** | Teams (channel groups), sections, channel tabs, scheduled/priority messages, read receipts, polls, import from Slack/Teams exports |
 | ⬜ | **M3 Calls** | Huddles / voice and video calls, screen share (WebRTC), meetings and calendar |
@@ -33,6 +33,7 @@ end-to-end encryption instead of its own protocol. See [docs/matrix.md](docs/mat
 
 ## Progress log
 
+- **2026-11-01** — Single sign-on (`m.login.sso`) on the desktop (system browser and a one-off loopback listener) and in the browser (page redirect); checked against Synapse with a CAS provider, in tests and in headless Chrome. Links in messages now open in the system browser on the desktop.
 - **2026-11-01** — The web app signs in to Matrix homeservers, with end-to-end encryption in the browser (IndexedDB store); checked in headless Chrome against Synapse.
 - **2026-11-01** — Read receipts: "Seen by" where each person stopped reading (Matrix public receipts). Parity 66/113.
 - **2026-11-01** — Archiving over Matrix: archived channels are read-only for every client (power levels), restorable exactly.

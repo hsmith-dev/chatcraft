@@ -108,14 +108,14 @@ fn sas_glyphs_are_known() {
 }
 
 mod shell {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     use chatcraft_engine::{Loopback, Session};
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
-    use crate::{Credentials, Shell, Start};
+    use crate::{Credentials, Shell, SsoPoll, Start};
 
     fn shell(start: Start) -> Harness<'static, Shell> {
         harness(new_shell(start))
@@ -145,7 +145,7 @@ mod shell {
 
     #[test]
     fn a_failed_sign_in_returns_to_the_form_with_the_error() {
-        let mut h = shell(Start::Connect(Credentials { homeserver: "hs".into(), user: "not a valid handle!".into(), password: String::new() }));
+        let mut h = shell(Start::Connect(Credentials { homeserver: "hs".into(), user: "not a valid handle!".into(), ..Credentials::default() }));
         h.run_steps(4);
         assert!(h.state_mut().app().is_none());
         assert!(h.query_all_by_label_contains("handle").next().is_some(), "the error is shown");
@@ -155,7 +155,12 @@ mod shell {
     fn signing_in_remembers_and_signing_out_forgets() {
         let remembered = Rc::new(Cell::new(false));
         let forgotten = Rc::new(Cell::new(false));
-        let mut s = new_shell(Start::Connect(Credentials { homeserver: "hs".into(), user: "morgan".into(), password: "pw".into() }));
+        let mut s = new_shell(Start::Connect(Credentials {
+            homeserver: "hs".into(),
+            user: "morgan".into(),
+            password: "pw".into(),
+            ..Credentials::default()
+        }));
         let (r, f) = (Rc::clone(&remembered), Rc::clone(&forgotten));
         s.on_signed_in = Some(Box::new(move |c| r.set(c.password.is_empty())));
         s.on_signed_out = Some(Box::new(move || f.set(true)));
@@ -170,5 +175,58 @@ mod shell {
         assert!(forgotten.get());
         assert!(h.state_mut().app().is_none());
         assert!(h.query_all_by_label_contains("Sign in with your Matrix account").next().is_some());
+    }
+
+    /// A fake single sign-on: opens a page, then hands over a token (or fails).
+    fn sso_shell(outcome: SsoPoll, connected_with: Rc<RefCell<Option<Credentials>>>) -> Shell {
+        let seen = Rc::clone(&connected_with);
+        let connect = Box::new(move |c: &Credentials| {
+            *seen.borrow_mut() = Some(c.clone());
+            Ok(Session::connect(Box::new(Loopback::demo()), Loopback::hello(&c.user)))
+        });
+        let mut s = Shell::new(Start::SignIn(Credentials { homeserver: "hs".into(), user: "morgan".into(), ..Credentials::default() }), connect);
+        s.sso = Some(Box::new(move |_c: &Credentials| {
+            let mut steps = vec![outcome.clone(), SsoPoll::Waiting, SsoPoll::Open("https://hs/sso".into())];
+            Ok(Box::new(move || steps.pop().unwrap_or(SsoPoll::Waiting)) as Box<dyn FnMut() -> SsoPoll>)
+        }));
+        s
+    }
+
+    #[test]
+    fn single_sign_on_waits_for_the_browser_then_connects_with_the_token() {
+        let connected = Rc::new(RefCell::new(None));
+        let mut h = harness(sso_shell(SsoPoll::Token("tok".into()), Rc::clone(&connected)));
+        h.get_by_label("Sign in with single sign-on").click();
+        h.run_steps(2);
+        assert!(h.query_all_by_label_contains("in your browser").next().is_some(), "waiting for the browser");
+        h.run_steps(6);
+        let c = connected.borrow().clone().unwrap();
+        assert_eq!((c.user.as_str(), c.login_token.as_str(), c.password.as_str()), ("morgan", "tok", ""));
+        assert!(h.state_mut().app().is_some(), "signed in");
+    }
+
+    #[test]
+    fn a_failed_single_sign_on_returns_to_the_form() {
+        let connected = Rc::new(RefCell::new(None));
+        let mut h = harness(sso_shell(SsoPoll::Failed("hs doesn't offer single sign-on".into()), Rc::clone(&connected)));
+        h.get_by_label("Sign in with single sign-on").click();
+        h.run_steps(8);
+        assert!(connected.borrow().is_none());
+        assert!(h.query_all_by_label_contains("doesn't offer single sign-on").next().is_some(), "the error is shown");
+    }
+
+    #[test]
+    fn single_sign_on_can_be_cancelled() {
+        let connected = Rc::new(RefCell::new(None));
+        let mut s = sso_shell(SsoPoll::Token("tok".into()), Rc::clone(&connected));
+        // This sign-on never finishes.
+        s.sso = Some(Box::new(|_c: &Credentials| Ok(Box::new(|| SsoPoll::Waiting) as Box<dyn FnMut() -> SsoPoll>)));
+        let mut h = harness(s);
+        h.get_by_label("Sign in with single sign-on").click();
+        h.run_steps(2);
+        h.get_by_label("Cancel").click();
+        h.run_steps(3);
+        assert!(h.query_all_by_label_contains("Sign in with your Matrix account").next().is_some());
+        assert!(connected.borrow().is_none());
     }
 }

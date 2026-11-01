@@ -16,6 +16,7 @@ mod html;
 pub mod mapper;
 mod rt;
 mod secrets;
+pub mod sso;
 mod verify;
 mod worker;
 
@@ -39,6 +40,9 @@ pub struct MatrixConfig {
     pub user: String,
     /// Used only when there is no saved session for this store.
     pub password: String,
+    /// A single-sign-on login token ([`sso`]), used instead of the password when there is no
+    /// saved session. Single use and short-lived.
+    pub login_token: String,
     /// Where this device's session, keys and cache live (one directory per account).
     pub store_dir: PathBuf,
     pub device_name: String,
@@ -54,6 +58,7 @@ impl MatrixConfig {
             homeserver: homeserver.into(),
             user: user.into(),
             password: password.into(),
+            login_token: String::new(),
             store_dir,
             device_name: "ChatCraft".into(),
             auto_join_invites: true,
