@@ -1,14 +1,18 @@
 # Matrix and end-to-end encryption
 
-_Status: 2026-11-01 · revision 2 (verification, key backup)_
+_Status: 2026-11-01 · revision 3 (keychain, sign-in, sign-out)_
 
 ChatCraft speaks **Matrix**, the open, federated chat standard, instead of a protocol of its own
 (the direction proposed in storytold/artcraft#2138). Any Matrix homeserver works — Synapse,
 Conduit/continuwuity/tuwunel, or a hosted one — and ChatCraft interoperates with other Matrix
 clients such as Element.
 
+Start the desktop app and sign in on the sign-in screen (or try the demo workspace from
+there). The account is remembered: later launches sign straight back in without a password.
+
 ```sh
-chatcraft --matrix https://matrix.example.org --user alice           # desktop
+chatcraft                                                           # sign-in screen / resume
+chatcraft --matrix https://matrix.example.org --user alice           # skip the form
 chatcraft-cli run --matrix https://matrix.example.org --as alice \
   --cmd 'channel.create={"name":"launch","private":true,"members":["@bob:example.org"]}'
 ```
@@ -46,8 +50,16 @@ servers share a localpart. People not met yet can be invited by Matrix ID (`@bob
   only. The integration test checks the server's copy contains no plaintext.
 - **One device per store.** The device's identity and room keys live in an encrypted SQLite store
   at `<data>/ChatCraft/matrix/<user>@<server>/store`, protected by a random passphrase from the OS
-  CSPRNG (`passphrase`, mode 0600); the session token is in `session.json` (0600). Restarting
-  reuses the same device, so earlier messages stay readable.
+  CSPRNG. The passphrase and the session (access token) are kept in the **OS keychain** — macOS
+  Keychain, Windows Credential Manager, the Secret Service on Linux — under the service
+  `ChatCraft`. Where there is no keychain (headless Linux, BSD) they fall back to files with mode
+  0600 in the account folder, and a warning is logged; `CHATCRAFT_SECRETS=files` forces files.
+  Secret files from earlier versions move into the keychain on first use. Restarting reuses the
+  same device, so earlier messages stay readable.
+- **Signing out** (profile menu › Sign out) signs the device out on the homeserver (its token
+  stops working), deletes its keychain entries and its key store, and forgets the remembered
+  account (`<data>/ChatCraft/account.json`, which holds only the homeserver and user name). Set up
+  key backup first to keep your encrypted history.
 - **Undecryptable messages are shown, not hidden**: "Can't decrypt this message yet" when this
   device has no key (it joined later, or is a new device without key backup).
 - **Encryption is visible**: a shield marks encrypted conversations in the header and composer.
@@ -78,7 +90,6 @@ servers share a localpart. People not met yet can be invited by Matrix ID (`@bob
 
 - Verifying **your own** devices (and QR-code verification); a stricter trust policy (only send
   keys to verified devices) as an option; warnings when a verified person's identity changes.
-- Storing the store passphrase and access token in the OS keychain instead of files.
 - Rendering `formatted_body` HTML from other clients; room directory browsing; pins, saved
   items, muting, archiving over Matrix.
 - Encrypted public channels are possible in Matrix but not offered: anyone may join them, so

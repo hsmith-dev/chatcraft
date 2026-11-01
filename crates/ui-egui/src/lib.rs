@@ -15,6 +15,7 @@ mod keys;
 mod markup;
 mod pane;
 mod sas;
+mod shell;
 mod sidebar;
 pub mod theme;
 mod timeline;
@@ -24,6 +25,7 @@ use chatcraft_engine::model::{ChannelId, MessageId, Ts, UserId};
 use egui::{Color32, Frame, Margin, Stroke, Ui};
 use serde_json::{Value, json};
 
+pub use shell::{Connect, Credentials, Shell, Start};
 pub use theme::{Mode, Tokens};
 
 /// UI-only commands: `(id, label, shortcut)`.
@@ -38,6 +40,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.shortcuts", "Keyboard shortcuts", "Mod+/"),
     ("ui.focusSearch", "Search", "Mod+F"),
     ("ui.recovery", "Encryption and key backup", "Mod+Shift+R"),
+    ("ui.signOut", "Sign out", ""),
 ];
 
 /// What the emoji picker inserts into.
@@ -91,6 +94,7 @@ pub(crate) enum Dialog {
         waiting: Option<(u64, RecoveryStep)>,
         message: Option<(String, bool)>,
     },
+    SignOut,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,6 +153,9 @@ pub(crate) struct UiState {
     pub next_hover_bar: Option<(MessageId, egui::Rect)>,
     /// The last verification flow the dialog was opened for.
     pub verify_shown: Option<String>,
+    /// Sign-out was asked for; set once it's done (the shell returns to sign-in).
+    pub signing_out: bool,
+    pub signed_out: bool,
 }
 
 /// The ChatCraft window.
@@ -190,6 +197,7 @@ impl ChatApp {
             "ui.focusSearch" => self.st.focus_search = true,
             "ui.recovery" => self.st.dialog = Some(Dialog::Recovery { key: None, input: String::new(), waiting: None, message: None }),
             "ui.closeDialog" => self.st.dialog = None,
+            "ui.signOut" => self.st.dialog = Some(Dialog::SignOut),
             _ if id.starts_with("ui.") => return Err(format!("unknown UI command `{id}`")),
             _ => {
                 let r = self.session.run(id, params).map_err(|e| e.to_string());
@@ -215,6 +223,9 @@ impl ChatApp {
         }
         self.session.focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         self.session.pump();
+        if self.st.signing_out && matches!(self.session.link_status(), chatcraft_engine::LinkStatus::Offline(ref w) if w == "signed out") {
+            self.st.signed_out = true;
+        }
         self.collect_toasts(&ctx);
         // A new verification (theirs or ours) opens its dialog.
         if let Some(v) = self.session.verifications.last()

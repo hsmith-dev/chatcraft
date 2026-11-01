@@ -85,7 +85,7 @@ mod tests {
                 assert!(parse(k).is_some(), "{}: {k}", s.id);
             }
         }
-        for (id, _, k) in UI_COMMANDS {
+        for (id, _, k) in UI_COMMANDS.iter().filter(|c| !c.2.is_empty()) {
             assert!(parse(k).is_some(), "{id}: {k}");
         }
     }

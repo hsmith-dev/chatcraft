@@ -13,6 +13,10 @@ use chatcraft_ui_egui::ChatApp;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let out = args.first().cloned().unwrap_or_else(|| "chatcraft.png".into());
+    if args.iter().any(|a| a == "--sign-in") {
+        sign_in_shot(&out, args.iter().any(|a| a == "--dark"));
+        return;
+    }
     let (mut w, mut h) = (1440.0, 900.0);
     let mut cmds = Vec::new();
     let (mut matrix, mut user, mut password, mut dark) = (None, String::new(), String::new(), false);
@@ -88,6 +92,27 @@ fn main() {
     harness.run_steps(6);
     match harness.render() {
         Ok(img) => match img.save(&out) {
+            Ok(()) => println!("{out}"),
+            Err(e) => eprintln!("save {out}: {e}"),
+        },
+        Err(e) => eprintln!("render: {e}"),
+    }
+}
+
+/// `--sign-in`: the sign-in screen (with a sample error when `--dark`, to show both states).
+fn sign_in_shot(out: &str, dark: bool) {
+    use chatcraft_ui_egui::{Credentials, Shell, Start};
+    let creds = Credentials { homeserver: "matrix.example.org".into(), user: "morgan".into(), password: String::new() };
+    let mut shell = Shell::new(Start::SignIn(creds), Box::new(|_: &Credentials| Err("Matrix sign-in failed: invalid username or password".into())));
+    shell.dark = dark;
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .with_pixels_per_point(2.0)
+        .wgpu()
+        .build_ui_state(|ui, s: &mut Shell| s.ui(ui), shell);
+    h.run_steps(4);
+    match h.render() {
+        Ok(img) => match img.save(out) {
             Ok(()) => println!("{out}"),
             Err(e) => eprintln!("save {out}: {e}"),
         },

@@ -13,7 +13,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use chatcraft_engine::{Loopback, Session};
-use chatcraft_matrix::{MatrixConfig, MatrixTransport};
+use chatcraft_matrix::{MatrixConfig, MatrixTransport, SecretStore};
 use serde_json::{Value, json};
 
 fn env(k: &str) -> Option<String> {
@@ -22,7 +22,10 @@ fn env(k: &str) -> Option<String> {
 
 fn session(hs: &str, cred: &str, store: &Path) -> Session {
     let (user, pw) = cred.split_once(':').unwrap_or((cred, ""));
-    let link = MatrixTransport::connect(MatrixConfig::new(hs, user, pw, store.to_path_buf())).unwrap();
+    // Tests keep secrets in files, never in the developer's keychain.
+    let mut cfg = MatrixConfig::new(hs, user, pw, store.to_path_buf());
+    cfg.secrets = SecretStore::Files;
+    let link = MatrixTransport::connect(cfg).unwrap();
     let mut s = Session::connect(Box::new(link), Loopback::hello(user));
     assert!(s.wait_ready(Duration::from_secs(60)), "{user} could not sign in: {:?}", s.error);
     s

@@ -21,5 +21,10 @@ getrandom = { workspace = true }
 futures-util = { workspace = true }
 log = { workspace = true }
 
+# The device's secrets (store passphrase, session) go to the OS keychain where there is one:
+# macOS Keychain, Windows Credential Manager, the Secret Service on Linux. MIT OR Apache-2.0.
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+keyring = "4.2"
+
 [dev-dependencies]
 tokio = { workspace = true }

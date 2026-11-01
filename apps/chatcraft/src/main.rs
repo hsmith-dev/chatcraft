@@ -1,18 +1,27 @@
 //! The ChatCraft desktop app.
 //!
-//! `chatcraft` opens the built-in demo workspace (in-process, nothing leaves the machine).
-//! `chatcraft --matrix https://matrix.example.org --user alice` signs in to a Matrix homeserver
-//! with end-to-end encryption (password from `--password` or `CHATCRAFT_PASSWORD`, needed only
-//! the first time on this device).
-//! `chatcraft --server ws://host:7900 --handle ada --token TOKEN [--name "Ada Park"]` connects to
-//! a `chatcraft-server`. `--dark` starts in dark mode.
+//! With no arguments it signs back in to the remembered Matrix account (its device and keys are
+//! in the OS keychain and the data folder), or shows the sign-in screen. Options:
+//! `--demo` (the built-in demo workspace, nothing leaves the machine);
+//! `--matrix https://matrix.example.org --user alice [--password PW]` (or `CHATCRAFT_PASSWORD`);
+//! `--server ws://host:port --handle NAME --token TOKEN` (the small built-in ChatCraft server);
+//! `--dark`.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use chatcraft_engine::Session;
-use chatcraft_engine::proto::{ClientFrame, PROTOCOL_VERSION};
-use chatcraft_ui_egui::ChatApp;
+use std::path::PathBuf;
 
+use chatcraft_engine::proto::{ClientFrame, PROTOCOL_VERSION};
+use chatcraft_engine::{Loopback, Session};
+use chatcraft_ui_egui::{Credentials, Shell, Start};
+
+const USAGE: &str = "usage: chatcraft [--demo]
+                 [--matrix https://homeserver --user NAME [--password PW]]
+                 [--server ws://host:port --handle NAME --token TOKEN [--name \"Display Name\"]]
+                 [--dark]";
+
+#[derive(Default)]
 struct Args {
+    demo: bool,
     matrix: Option<String>,
     user: String,
     password: String,
@@ -23,26 +32,17 @@ struct Args {
     dark: bool,
 }
 
-const USAGE: &str = "usage: chatcraft [--demo]
-                 [--matrix https://homeserver --user NAME [--password PW]]
-                 [--server ws://host:port --handle NAME --token TOKEN [--name \"Display Name\"]]
-                 [--dark]";
-
 fn args() -> Result<Args, String> {
     let mut a = Args {
-        matrix: None,
-        user: String::new(),
         password: std::env::var("CHATCRAFT_PASSWORD").unwrap_or_default(),
-        server: None,
-        handle: String::new(),
-        name: String::new(),
         token: std::env::var("CHATCRAFT_TOKEN").unwrap_or_default(),
-        dark: false,
+        ..Args::default()
     };
     let mut it = std::env::args().skip(1);
     while let Some(x) = it.next() {
         let mut val = || it.next().ok_or_else(|| format!("{x} needs a value\n{USAGE}"));
         match x.as_str() {
+            "--demo" => a.demo = true,
             "--matrix" => a.matrix = Some(val()?),
             "--user" => a.user = val()?,
             "--password" => a.password = val()?,
@@ -51,7 +51,6 @@ fn args() -> Result<Args, String> {
             "--name" => a.name = val()?,
             "--token" => a.token = val()?,
             "--dark" => a.dark = true,
-            "--demo" => a.server = None,
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument `{other}`\n{USAGE}")),
         }
@@ -65,7 +64,37 @@ fn args() -> Result<Args, String> {
     Ok(a)
 }
 
-struct App(ChatApp);
+/// The remembered account: homeserver and user name only (secrets live in the keychain).
+fn account_file() -> PathBuf {
+    chatcraft_matrix::data_dir().join("account.json")
+}
+
+fn remembered() -> Option<Credentials> {
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(account_file()).ok()?).ok()?;
+    let homeserver = v.get("homeserver")?.as_str()?.to_string();
+    let user = v.get("user")?.as_str()?.to_string();
+    Some(Credentials { homeserver, user, password: String::new() })
+}
+
+fn remember(c: &Credentials) {
+    let path = account_file();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, serde_json::json!({ "homeserver": c.homeserver, "user": c.user }).to_string());
+}
+
+fn forget() {
+    let _ = std::fs::remove_file(account_file());
+}
+
+fn connect_matrix(c: &Credentials) -> Result<Session, String> {
+    let store = chatcraft_matrix::default_store_dir(&c.homeserver, &c.user);
+    let link = chatcraft_matrix::MatrixTransport::connect(chatcraft_matrix::MatrixConfig::new(&c.homeserver, &c.user, &c.password, store))?;
+    Ok(Session::connect(Box::new(link), Loopback::hello(&c.user)))
+}
+
+struct App(Shell);
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -81,45 +110,49 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let session = match (&a.matrix, &a.server) {
-        (Some(hs), _) => {
-            let store = chatcraft_matrix::default_store_dir(hs, &a.user);
-            match chatcraft_matrix::MatrixTransport::connect(chatcraft_matrix::MatrixConfig::new(hs, &a.user, &a.password, store)) {
-                Ok(link) => Session::connect(Box::new(link), chatcraft_engine::Loopback::hello(&a.user)),
-                Err(e) => {
-                    eprintln!("cannot start Matrix: {e}");
-                    return std::process::ExitCode::FAILURE;
-                }
-            }
-        }
-        (None, None) => Session::demo(),
-        (None, Some(url)) => match chatcraft_net::NetTransport::connect(url) {
+    let start = if a.demo {
+        Start::Session(Box::new(Session::demo()))
+    } else if let Some(hs) = &a.matrix {
+        Start::Connect(Credentials { homeserver: hs.clone(), user: a.user.clone(), password: a.password.clone() })
+    } else if let Some(url) = &a.server {
+        match chatcraft_net::NetTransport::connect(url) {
             Ok(link) => {
                 let hello =
                     ClientFrame::Hello { version: PROTOCOL_VERSION, handle: a.handle.clone(), display_name: a.name.clone(), token: a.token.clone() };
-                Session::connect(Box::new(link), hello)
+                Start::Session(Box::new(Session::connect(Box::new(link), hello)))
             }
             Err(e) => {
                 eprintln!("cannot start networking: {e}");
                 return std::process::ExitCode::FAILURE;
             }
-        },
+        }
+    } else {
+        match remembered() {
+            Some(c) => Start::Connect(c),
+            None => Start::SignIn(Credentials::default()),
+        }
     };
     let offset = chrono::Local::now().offset().local_minus_utc() / 60;
     let opts = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_title("ChatCraft").with_inner_size([1360.0, 860.0]).with_min_inner_size([760.0, 480.0]),
         ..Default::default()
     };
+    let dark = a.dark;
     let r = eframe::run_native(
         "ChatCraft",
         opts,
         Box::new(move |cc| {
-            let mut app = ChatApp::new(session);
-            app.utc_offset_minutes = offset;
-            app.set_dark(a.dark);
-            let ctx = cc.egui_ctx.clone();
-            app.session.set_waker(Box::new(move || ctx.request_repaint()));
-            Ok(Box::new(App(app)))
+            let mut shell = Shell::new(start, Box::new(connect_matrix));
+            shell.on_signed_in = Some(Box::new(remember));
+            shell.on_signed_out = Some(Box::new(forget));
+            shell.dark = dark;
+            shell.utc_offset_minutes = offset;
+            if let Some(app) = shell.app() {
+                app.set_dark(dark);
+                let ctx = cc.egui_ctx.clone();
+                app.session.set_waker(Box::new(move || ctx.request_repaint()));
+            }
+            Ok(Box::new(App(shell)))
         }),
     );
     match r {

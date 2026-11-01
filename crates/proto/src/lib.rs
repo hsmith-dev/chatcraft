@@ -151,6 +151,8 @@ pub enum Op {
     Recover {
         key: String,
     },
+    /// Signs this device out and forgets it: session, secrets and local key store (Matrix only).
+    SignOut,
 }
 
 /// What the person does in a verification.

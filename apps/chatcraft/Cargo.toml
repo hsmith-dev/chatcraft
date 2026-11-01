@@ -18,3 +18,4 @@ eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "
 egui = { workspace = true }
 log = { workspace = true }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+serde_json = { workspace = true }
