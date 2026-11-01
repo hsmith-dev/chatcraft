@@ -18,7 +18,7 @@ use matrix_sdk::ruma::api::client::room::{Visibility, create_room};
 use matrix_sdk::ruma::events::InitialStateEvent;
 use matrix_sdk::ruma::events::room::encryption::RoomEncryptionEventContent;
 use matrix_sdk::ruma::events::room::join_rules::JoinRule;
-use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
+
 use matrix_sdk::ruma::presence::PresenceState;
 use matrix_sdk::ruma::{EventId, OwnedUserId, RoomId, UInt, UserId};
 use matrix_sdk::sync::SyncResponse;
@@ -411,9 +411,18 @@ impl Worker {
         Ok(())
     }
 
-    /// Message content: Markdown → HTML for other clients, plus intentional mentions.
+    /// Message content: the markup as `body`, HTML rendered by ChatCraft's own parser as
+    /// `formatted_body` (so `*x*` means bold everywhere), plus intentional mentions.
     fn message_content(&self, text: &str) -> R<Value> {
-        let mut content = serde_json::to_value(RoomMessageEventContent::text_markdown(text)).map_err(err)?;
+        let mxid_of = |h: &str| self.map.resolve_mention(h).and_then(|u| self.map.mxid(u)).map(str::to_string);
+        let html = crate::html::from_markup(text, &mxid_of);
+        let mut content = json!({ "msgtype": "m.text", "body": text });
+        if html != crate::html::escape_text(text)
+            && let Some(o) = content.as_object_mut()
+        {
+            o.insert("format".into(), json!("org.matrix.custom.html"));
+            o.insert("formatted_body".into(), json!(html));
+        }
         let ids: Vec<String> = chatcraft_text::mentions(text)
             .iter()
             .filter_map(|h| self.map.resolve_mention(h))

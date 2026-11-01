@@ -14,7 +14,7 @@ chatcraft-model = { workspace = true }
 chatcraft-proto = { workspace = true }
 chatcraft-text = { workspace = true }
 chatcraft-engine = { workspace = true }
-matrix-sdk = { version = "0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs", "markdown"] }
+matrix-sdk = { version = "0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs"] }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 getrandom = { workspace = true }

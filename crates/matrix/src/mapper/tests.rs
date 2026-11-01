@@ -120,6 +120,26 @@ fn undecryptable_messages_are_replaced_when_their_key_arrives() {
 }
 
 #[test]
+fn formatted_bodies_keep_their_formatting() {
+    let mut m = Mapper::new(ME);
+    let c = room(&mut m, "!r:test", "general", &[ME, "@bob:test"], false);
+    let ev = json!({"type": "m.room.message", "event_id": "$h", "sender": "@bob:test", "origin_server_ts": 1,
+        "content": {"msgtype": "m.text", "body": "Ship it alice", "format": "org.matrix.custom.html",
+                    "formatted_body": "<strong>Ship</strong> it <a href=\"https://matrix.to/#/@alice:test\">Alice</a>"}});
+    m.timeline("!r:test", &ev, false, false);
+    let msg = m.state().timeline(c)[0];
+    assert_eq!(msg.text, "*Ship* it @alice");
+    assert!(msg.mentions.contains(&m.me().unwrap()), "a pill is a mention");
+    // A ChatCraft message (HTML reproducible from its body) keeps its exact source.
+    let src = "*Ship* it :rocket: @alice";
+    let html = crate::html::from_markup(src, &|h: &str| (h == "alice").then(|| ME.to_string()));
+    let ev = json!({"type": "m.room.message", "event_id": "$cc", "sender": "@bob:test", "origin_server_ts": 2,
+        "content": {"msgtype": "m.text", "body": src, "format": "org.matrix.custom.html", "formatted_body": html}});
+    m.timeline("!r:test", &ev, false, false);
+    assert_eq!(m.state().timeline(c)[1].text, src);
+}
+
+#[test]
 fn dms_handles_presence_status() {
     let mut m = Mapper::new(ME);
     let c = m.upsert_room(&RoomInfo {

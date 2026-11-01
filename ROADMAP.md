@@ -33,6 +33,7 @@ end-to-end encryption instead of its own protocol. See [docs/matrix.md](docs/mat
 
 ## Progress log
 
+- **2026-11-01** — Matrix rich text: received HTML (pills, bold, links, lists, quotes, code) becomes ChatCraft markup; sent messages carry HTML from ChatCraft's own parser so other clients see the intended formatting.
 - **2026-11-01** — M1-E: device secrets in the OS keychain (with file fallback and migration); sign-in screen with a remembered account; sign out that revokes the session on the homeserver and deletes the device's keys.
 - **2026-11-01** — M1-E: identity verification by emoji (Matrix SAS) with cross-signing, trust shown in profiles and member lists; key backup with a recovery key, restore on new devices, late-key re-decryption. Integration tests against Synapse for both.
 - **2026-11-01** — M1-E started: `chatcraft-matrix` transport (matrix-rust-sdk 0.19), encrypted private channels and DMs, persistent device store, undecryptable-message and encryption indicators in the UI, `--matrix` in desktop/CLI, E2EE integration test against Synapse (server holds ciphertext only).

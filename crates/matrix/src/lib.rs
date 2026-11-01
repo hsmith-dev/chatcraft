@@ -12,6 +12,7 @@
 //! keys — is used on every launch.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod html;
 pub mod mapper;
 mod secrets;
 mod verify;

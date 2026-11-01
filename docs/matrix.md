@@ -33,7 +33,8 @@ UI, the CLI and MCP are unchanged:
 | Message, thread reply | `m.room.message`; threads via `m.thread` relations |
 | Edit, delete | `m.replace` (accepted only from the original author), redaction |
 | Reaction | `m.reaction` annotation (Unicode key ↔ our shortcodes) |
-| Mentions | `m.mentions` (intentional mentions) plus `@name` in the text |
+| Mentions | `m.mentions` (intentional mentions), mention pills, plus `@name` in the text |
+| Formatting | Sent as `body` (ChatCraft markup) + `formatted_body` HTML rendered by ChatCraft's own parser (`*x*` is bold, as in Slack); received HTML (bold, italic, strike, code, links, pills, quotes, lists) converted back to markup (`crates/matrix/src/html.rs`). A ChatCraft message whose HTML re-renders from its body keeps its exact source |
 | Read state | `m.fully_read` + public read receipts |
 | Star | `m.favourite` tag |
 | Presence, status | `m.presence`, `status_msg` (`:emoji: text`) |
@@ -90,8 +91,8 @@ servers share a localpart. People not met yet can be invited by Matrix ID (`@bob
 
 - Verifying **your own** devices (and QR-code verification); a stricter trust policy (only send
   keys to verified devices) as an option; warnings when a verified person's identity changes.
-- Rendering `formatted_body` HTML from other clients; room directory browsing; pins, saved
-  items, muting, archiving over Matrix.
+- Room directory browsing; pins, saved items, muting, archiving over Matrix; images, tables and
+  headings in received HTML are reduced to their text.
 - Encrypted public channels are possible in Matrix but not offered: anyone may join them, so
   encryption adds little and breaks history for newcomers.
 

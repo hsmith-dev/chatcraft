@@ -288,7 +288,9 @@ impl Mapper {
                 self.emit(Event::MessagePosted { message });
             }
             ("m.room.message", Some("m.replace")) => {
-                let (Some(target), Some(text)) = (rel_target, content.get("m.new_content").and_then(|c| str_at(c, &["body"]))) else { return };
+                let new_content = content.get("m.new_content").cloned().unwrap_or(Value::Null);
+                let (Some(target), Some(text)) = (rel_target, self.text_of(&new_content)) else { return };
+                let text = text.as_str();
                 let Some(mid) = self.events.get(target).map(MessageId) else { return };
                 // Only the author may edit; anything else is forged and ignored.
                 if self.state.message(mid).is_some_and(|m| m.author == author) {
@@ -305,7 +307,8 @@ impl Mapper {
             // Verification requests travel as room messages; they're not chat.
             ("m.room.message", _) if str_at(&content, &["msgtype"]).is_some_and(|t| t.starts_with("m.key.verification")) => {}
             ("m.room.message", _) => {
-                let Some(text) = str_at(&content, &["body"]) else { return };
+                let Some(text) = self.text_of(&content) else { return };
+                let text = text.as_str();
                 let thread = match rel_type {
                     Some("m.thread") => rel_target.and_then(|t| self.events.get(t)).map(MessageId),
                     _ => None,
@@ -345,6 +348,33 @@ impl Mapper {
         // A placeholder that turned out to be a reaction, edit or redaction isn't a message.
         if let Some(p) = placeholder {
             self.emit(Event::MessageDeleted { message: p, at: ts });
+        }
+    }
+
+    /// The message text in ChatCraft markup: the HTML `formatted_body` when there is one (it keeps
+    /// the formatting), else the plain `body`.
+    fn text_of(&self, content: &Value) -> Option<String> {
+        let html = (str_at(content, &["format"]) == Some("org.matrix.custom.html")).then(|| str_at(content, &["formatted_body"])).flatten();
+        let body = str_at(content, &["body"]);
+        match html {
+            // ChatCraft wrote it (our renderer reproduces the HTML from the body): the body is
+            // the exact source, shortcodes and all.
+            Some(h)
+                if body.is_some_and(|b| {
+                    let mxid_of = |handle: &str| self.state.resolve_user(handle).and_then(|u| self.users.name(u.0)).map(str::to_string);
+                    crate::html::from_markup(b, &mxid_of) == h
+                }) =>
+            {
+                body.map(str::to_string)
+            }
+            Some(h) => {
+                let handle = |mxid: &str| match self.users.get(mxid).and_then(|u| self.state.user(UserId(u))) {
+                    Some(u) => format!("@{}", u.handle),
+                    None => format!("@{}", localpart(mxid)),
+                };
+                Some(crate::html::to_markup(h, &handle)).filter(|t| !t.trim().is_empty()).or_else(|| str_at(content, &["body"]).map(str::to_string))
+            }
+            None => str_at(content, &["body"]).map(str::to_string),
         }
     }
 
