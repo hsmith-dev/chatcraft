@@ -128,6 +128,11 @@ pub enum Event {
     MessageReplaced {
         message: Message,
     },
+    /// Who is typing in a conversation right now (transient: never journaled, not in snapshots).
+    Typing {
+        channel: ChannelId,
+        users: Vec<UserId>,
+    },
     /// The viewer's trust in someone's identity changed (client-side, from Matrix verification).
     UserVerified {
         user: UserId,
@@ -154,6 +159,7 @@ impl Event {
             | Event::ChannelArchived { channel, .. }
             | Event::MemberJoined { channel, .. }
             | Event::MemberLeft { channel, .. }
+            | Event::Typing { channel, .. }
             | Event::DefaultChannelSet { channel } => Some(*channel),
             _ => None,
         }

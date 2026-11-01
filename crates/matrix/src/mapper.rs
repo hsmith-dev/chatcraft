@@ -233,6 +233,17 @@ impl Mapper {
         id
     }
 
+    /// `m.typing`: who is typing in a room (we never list ourselves).
+    pub fn set_typing(&mut self, room_id: &str, mxids: &[String]) {
+        let Some(channel) = self.known_channel(room_id) else { return };
+        let me = self.me;
+        let users: Vec<UserId> = mxids.iter().map(|m| self.user(m, None)).filter(|u| Some(*u) != me).collect();
+        let now: BTreeSet<UserId> = users.iter().copied().collect();
+        if self.state.typing.get(&channel).cloned().unwrap_or_default() != now {
+            self.emit(Event::Typing { channel, users });
+        }
+    }
+
     pub fn set_pinned(&mut self, message: MessageId, pinned: bool) {
         let by = self.me.unwrap_or_default();
         if self.state.message(message).is_some_and(|m| m.pinned != pinned) {

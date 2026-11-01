@@ -385,6 +385,18 @@ impl Worker {
             for ev in &up.timeline.events {
                 self.timeline_event(rid.as_str(), ev);
             }
+            for ev in &up.ephemeral {
+                let Ok(json) = serde_json::from_str::<Value>(ev.json().get()) else { continue };
+                if json.get("type").and_then(Value::as_str) == Some("m.typing") {
+                    let ids: Vec<String> = json
+                        .get("content")
+                        .and_then(|c| c.get("user_ids"))
+                        .and_then(Value::as_array)
+                        .map(|a| a.iter().filter_map(Value::as_str).take(50).map(str::to_string).collect())
+                        .unwrap_or_default();
+                    self.map.set_typing(rid.as_str(), &ids);
+                }
+            }
             for ad in &up.account_data {
                 let Ok(json) = serde_json::from_str::<Value>(ad.json().get()) else { continue };
                 if json.get("type").and_then(Value::as_str) == Some("m.fully_read")
@@ -790,6 +802,10 @@ impl Worker {
                 let joined = self.client.join_room_by_id_or_alias(&id, &[]).await.map_err(err)?;
                 let info = self.info(&joined).await;
                 Ok(json!({ "channel": self.map.upsert_room(&info) }))
+            }
+            Op::Typing { channel, typing } => {
+                self.room(channel)?.typing_notice(typing).await.map_err(err)?;
+                Ok(Value::Null)
             }
             Op::Devices => {
                 let list = self.client.devices().await.map_err(err)?;

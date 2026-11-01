@@ -64,7 +64,7 @@ pub const FEATURES: &[Feature] = &[
     f(Teams, "Messaging", "Mark a message important or urgent", "message.markImportant"),
     f(Teams, "Messaging", "Announcement posts", "message.announce"),
     f(Teams, "Messaging", "Read receipts", "message.readReceipts"),
-    f(Both, "Messaging", "Typing indicator", "presence.typing"),
+    f(Both, "Messaging", "Typing indicator", "composer.typing"),
     f(Both, "Messaging", "Edit history", "message.history"),
     f(Both, "Messaging", "Link previews (unfurling)", "message.unfurl"),
     f(Teams, "Messaging", "Translate a message", "message.translate"),

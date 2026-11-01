@@ -7,7 +7,7 @@ clients; a durable WebSocket server; the command registry; measured parity.
 
 | Number | Value |
 |---|---|
-| Slack/Teams parity (catalogued features with a command) | **64 / 113 (56%)** |
+| Slack/Teams parity (catalogued features with a command) | **65 / 113 (57%)** |
 | Engine commands | 65 (+ 9 UI commands) |
 | Tests | 65, including hostile-input sweeps over every command and op, and a real-socket end-to-end test |
 | Platforms | macOS, Windows, Linux, BSD (native), web (wasm, demo workspace) |
@@ -33,6 +33,7 @@ end-to-end encryption instead of its own protocol. See [docs/matrix.md](docs/mat
 
 ## Progress log
 
+- **2026-11-01** — Typing indicators (Matrix `m.typing`; transient, never journaled). Parity 65/113.
 - **2026-11-01** — Your devices: list every signed-in device with trust and last activity, verify your own devices by emoji, sign a device out remotely (password-confirmed).
 - **2026-11-01** — Matrix coverage: pins, mutes and saved items live on the server (and in other clients where Matrix defines them); public room directory with join by id or address; public channels get an address. Fixed: names reset by message senders, stale state served by Synapse's sync cache on quick restarts, room v12 ids.
 - **2026-11-01** — Matrix rich text: received HTML (pills, bold, links, lists, quotes, code) becomes ChatCraft markup; sent messages carry HTML from ChatCraft's own parser so other clients see the intended formatting.

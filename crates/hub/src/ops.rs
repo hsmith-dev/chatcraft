@@ -315,6 +315,7 @@ pub(crate) fn plan(hub: &mut Hub, actor: UserId, op: Op, now: Ts) -> Result<Plan
             member(&hub.state, id, actor)?;
             ok(vec![Event::ChannelStarred { user: actor, channel: id, starred }])
         }
+        Op::Typing { .. } => ok(Vec::new()),
         Op::VerifyUser { .. }
         | Op::Verification { .. }
         | Op::SetUpRecovery

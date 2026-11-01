@@ -26,6 +26,9 @@ pub struct State {
     /// The sequence number of the last applied event.
     #[serde(default)]
     pub seq: u64,
+    /// Who is typing where (transient).
+    #[serde(skip)]
+    pub typing: BTreeMap<ChannelId, BTreeSet<UserId>>,
     /// Channel → timeline message ids (roots and broadcast replies), ascending.
     #[serde(skip)]
     timeline: BTreeMap<ChannelId, Vec<MessageId>>,
@@ -197,6 +200,13 @@ impl State {
                     self.post(&m);
                 }
             }
+            Event::Typing { channel, users } => {
+                if users.is_empty() {
+                    self.typing.remove(channel);
+                } else {
+                    self.typing.insert(*channel, users.iter().copied().collect());
+                }
+            }
             Event::UserVerified { user, verified } => {
                 if let Some(u) = self.users.get_mut(user) {
                     u.verified = *verified;
@@ -208,6 +218,10 @@ impl State {
     fn post(&mut self, m: &Message) {
         if self.messages.contains_key(&m.id) {
             return;
+        }
+        // Sending a message ends typing.
+        if let Some(t) = self.typing.get_mut(&m.channel) {
+            t.remove(&m.author);
         }
         if let Some(root) = m.thread {
             insert_sorted(self.replies.entry(root).or_default(), m.id);

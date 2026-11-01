@@ -37,6 +37,13 @@ pub(super) fn commands() -> Vec<CommandSpec> {
         CommandSpec::new("thread.close", "Close thread", "Thread", thread_close).key("Escape").pure(),
         CommandSpec::new("thread.list", "List replies", "Agents", thread_list).params(r#"{"message": id}"#).pure(),
         CommandSpec::new("composer.setDraft", "Set draft", "Composer", set_draft).params(r#"{"text": string, "channel"?}"#).pure(),
+        CommandSpec::new("composer.typing", "Typing", "Composer", |s, v| {
+            let channel = s.target_channel(v)?;
+            s.submit(Op::Typing { channel, typing: p::bool(v, "typing").unwrap_or(true) })
+        })
+        .params(r#"{"channel"?, "typing"?: bool (default true)}"#)
+        .pure()
+        .when(signed_in),
         CommandSpec::new("composer.send", "Send draft", "Composer", send_draft).params(r#"{"channel"?}"#).when(signed_in),
     ]
 }
