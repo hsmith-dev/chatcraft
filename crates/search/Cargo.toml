@@ -1,0 +1,15 @@
+[package]
+name = "chatcraft-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ChatCraft message search: query parsing with in:/from:/has:/is:/before:/after:/during: modifiers, phrase and exclusion terms, ranking"
+
+[lints]
+workspace = true
+
+[dependencies]
+chatcraft-core = { workspace = true }
+chatcraft-model = { workspace = true }
+chatcraft-text = { workspace = true }
+serde = { workspace = true }

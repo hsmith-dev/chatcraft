@@ -1,0 +1,15 @@
+[package]
+name = "chatcraft-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ChatCraft persistence: the append-only workspace event journal (JSON lines), crash-tolerant replay"
+
+[lints]
+workspace = true
+
+[dependencies]
+chatcraft-model = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

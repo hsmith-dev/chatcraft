@@ -1,0 +1,21 @@
+[package]
+name = "chatcraft-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ChatCraft engine: the client Session (replica, view, drafts), the transport seam with an in-process hub, and the command registry (every action is a command); Slack/Teams feature catalog"
+
+[lints]
+workspace = true
+
+[dependencies]
+chatcraft-core = { workspace = true }
+chatcraft-model = { workspace = true }
+chatcraft-proto = { workspace = true }
+chatcraft-text = { workspace = true }
+chatcraft-search = { workspace = true }
+chatcraft-hub = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

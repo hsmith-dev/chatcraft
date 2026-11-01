@@ -1,0 +1,13 @@
+*~
+plan/
+/target
+/dist
+/corpus
+/log
+.DS_Store
+/target-*/
+/craft-fonts/
+/chatcraft-data/
+# BMad tooling is installed locally (npx bmad-method install); its output lives in plan/bmad.
+/_bmad/
+/.claude/

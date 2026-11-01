@@ -1,0 +1,27 @@
+name: CI
+
+# Quality gates for every push to main and every pull request (`cargo xtask ci`), through the
+# Craft apps' shared, public gate workflow.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gate:
+    # Tracks @main so suite-wide CI fixes arrive without a PR here.
+    uses: storytold/craft-common-actions/.github/workflows/gate.yml@main
+    with:
+      # ChatCraft bundles no craft-fonts (yet).
+      craft-fonts-ref: ""
+      packages: >-
+        pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+        libgtk-3-dev libfontconfig1-dev libfreetype-dev mesa-vulkan-drivers

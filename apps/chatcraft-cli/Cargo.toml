@@ -1,0 +1,16 @@
+[package]
+name = "chatcraft-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "ChatCraft command line: run any command headlessly, list commands, parity, MCP server"
+
+[lints]
+workspace = true
+
+[dependencies]
+chatcraft-engine = { workspace = true }
+chatcraft-net = { workspace = true }
+chatcraft-mcp = { workspace = true }
+serde_json = { workspace = true }

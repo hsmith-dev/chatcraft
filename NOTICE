@@ -1,0 +1,22 @@
+ChatCraft
+Copyright (c) 2026 the ChatCraft contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
+
+ChatCraft is an independent, clean-room project. It is not affiliated with, endorsed by or
+sponsored by Slack Technologies, Salesforce, Microsoft or the ArtCraft Team. "Slack" and
+"Microsoft Teams" are trademarks of their owners and are used here only to describe
+compatibility and feature parity.
+
+Third-party material
+
+Fonts embedded through the egui dependency (epaint_default_fonts), all redistributable:
+- Ubuntu-Light.ttf — Ubuntu Font Licence 1.0 (Dalton Maag / Canonical)
+- Hack-Regular.ttf — MIT and Bitstream Vera licence (Source Foundry)
+- NotoEmoji-Regular.ttf — SIL Open Font Licence 1.1 (Google)
+- emoji-icon-font.ttf — MIT (John Slegers)
+- egui-icons.ttf — MIT / Apache-2.0 (the egui authors)
+Licence texts ship with the epaint_default_fonts crate.
+
+Rust dependencies are listed in Cargo.lock under their own licences (MIT, Apache-2.0, BSD,
+Zlib, Unicode-3.0 and similar permissive licences).

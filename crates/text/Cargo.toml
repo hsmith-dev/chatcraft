@@ -1,0 +1,13 @@
+[package]
+name = "chatcraft-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ChatCraft message markup: mrkdwn/Markdown inline styles, mentions, channel links, emoji shortcodes, plain-text and word extraction"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+unicode-segmentation = { workspace = true }

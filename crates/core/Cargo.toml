@@ -1,0 +1,18 @@
+[package]
+name = "chatcraft-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ChatCraft foundation: typed ids, timestamps, limits and validation shared by every crate"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+chrono = { workspace = true }
+web-time = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

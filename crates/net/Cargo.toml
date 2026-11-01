@@ -1,0 +1,23 @@
+[package]
+name = "chatcraft-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ChatCraft networking (native): the WebSocket workspace server around the hub and journal, and a reconnecting client transport"
+
+[lints]
+workspace = true
+
+[dependencies]
+chatcraft-core = { workspace = true }
+chatcraft-model = { workspace = true }
+chatcraft-proto = { workspace = true }
+chatcraft-hub = { workspace = true }
+chatcraft-store = { workspace = true }
+chatcraft-engine = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+getrandom = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "chatcraft-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ChatCraft MCP server: every command as a tool over stdio JSON-RPC, against the demo workspace or a live server"
+
+[lints]
+workspace = true
+
+[dependencies]
+chatcraft-engine = { workspace = true }
+serde_json = { workspace = true }

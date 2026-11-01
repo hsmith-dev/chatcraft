@@ -1,0 +1,20 @@
+[package]
+name = "chatcraft-ui-egui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ChatCraft egui front end (swappable: nothing below depends on it)"
+
+[lints]
+workspace = true
+
+[dependencies]
+chatcraft-engine = { workspace = true }
+egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
+serde_json = { workspace = true }
+log = { workspace = true }
+web-time = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+eframe = { workspace = true, features = ["default_fonts", "wgpu"] }

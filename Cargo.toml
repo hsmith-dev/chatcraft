@@ -1,0 +1,73 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "xtask"]
+default-members = ["crates/*", "apps/chatcraft", "apps/chatcraft-cli", "apps/chatcraft-server", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+repository = "https://github.com/hsmith-dev/chatcraft"
+
+[workspace.dependencies]
+# internal
+chatcraft-core = { path = "crates/core" }
+chatcraft-text = { path = "crates/text" }
+chatcraft-model = { path = "crates/model" }
+chatcraft-proto = { path = "crates/proto" }
+chatcraft-store = { path = "crates/store" }
+chatcraft-search = { path = "crates/search" }
+chatcraft-hub = { path = "crates/hub" }
+chatcraft-engine = { path = "crates/engine" }
+chatcraft-net = { path = "crates/net" }
+chatcraft-mcp = { path = "crates/mcp" }
+chatcraft-ui-egui = { path = "crates/ui-egui" }
+
+# foundation
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+# All date/time conversion goes through chrono (AGENTS.md); no hand-rolled calendar code.
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+# A wall clock and monotonic clock that work natively and in the browser (`SystemTime::now()`
+# panics on wasm32-unknown-unknown).
+web-time = "1.1"
+unicode-segmentation = "1"
+
+# networking (native only: crates/net and the server/CLI binaries)
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "net", "sync", "macros", "time", "io-util", "signal"] }
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+getrandom = "0.3"
+
+# ui
+egui = "0.37"
+eframe = { version = "0.37", default-features = false }
+egui_kittest = "0.37"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+cognitive_complexity = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "deny"
+type_complexity = "allow"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+debug = 0
