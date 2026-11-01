@@ -52,6 +52,8 @@ pub struct RoomInfo {
     pub pinned: Vec<String>,
     /// Notifications muted for us (push rules).
     pub muted: bool,
+    /// Archived (ChatCraft's `dev.chatcraft.archived` room state; the room is read-only).
+    pub archived: bool,
 }
 
 /// The mapper.
@@ -203,7 +205,7 @@ impl Mapper {
             topic: info.topic.clone(),
             purpose: prev.as_ref().map(|c| c.purpose.clone()).unwrap_or_default(),
             members,
-            archived: false,
+            archived: info.archived,
             encrypted: info.encrypted,
             created_by: prev.as_ref().map(|c| c.created_by).unwrap_or_default(),
             created: prev.as_ref().map(|c| c.created).unwrap_or_default(),
@@ -241,6 +243,13 @@ impl Mapper {
         let now: BTreeSet<UserId> = users.iter().copied().collect();
         if self.state.typing.get(&channel).cloned().unwrap_or_default() != now {
             self.emit(Event::Typing { channel, users });
+        }
+    }
+
+    pub fn set_archived(&mut self, channel: ChannelId, archived: bool) {
+        let by = self.me.unwrap_or_default();
+        if self.state.channel(channel).is_some_and(|c| c.archived != archived) {
+            self.emit(Event::ChannelArchived { channel, archived, by });
         }
     }
 

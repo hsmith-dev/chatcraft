@@ -411,3 +411,49 @@ fn older_history_loads_page_by_page_in_order() {
     assert_eq!(all, expected, "every message, in the order it was sent");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn archived_channels_are_read_only_for_everyone() {
+    let (Some(hs), Some(_)) = (env("CHATCRAFT_TEST_HOMESERVER"), env("CHATCRAFT_TEST_REGISTER")) else {
+        eprintln!("skipped: set CHATCRAFT_TEST_HOMESERVER and CHATCRAFT_TEST_REGISTER=1");
+        return;
+    };
+    let server = env("CHATCRAFT_TEST_SERVER_NAME").unwrap_or_else(|| "localhost".into());
+    let tag = format!("{}{}", std::process::id(), Instant::now().elapsed().as_nanos() % 1000);
+    let (a_name, b_name) = (format!("jo{tag}"), format!("kit{tag}"));
+    register(&hs, &a_name, "pw-jo-12345");
+    register(&hs, &b_name, "pw-kit-1234");
+    let dir = std::env::temp_dir().join(format!("chatcraft-archive-{tag}"));
+    let mut jo = session(&hs, &a_name, "pw-jo-12345", &dir.join("jo"));
+    let mut kit = session(&hs, &b_name, "pw-kit-1234", &dir.join("kit"));
+    let name = format!("q3-plans-{tag}");
+    let r = run(&mut jo, "channel.create", json!({ "name": name }));
+    let c = chatcraft_engine::model::ChannelId(r["channel"].as_u64().unwrap());
+    run(&mut kit, "channel.join", json!({ "channel": format!("#{name}:{server}") }));
+    until(&mut jo, &mut kit, "Kit is in", |_, k| k.state.channel_by_name(&name).is_some());
+    let kc = kit.state.channel_by_name(&name).unwrap().id;
+
+    run(&mut jo, "channel.archive", json!({ "channel": c.to_string() }));
+    assert!(jo.state.channel(c).unwrap().archived);
+    until(&mut jo, &mut kit, "Kit sees it archived", |_, k| k.state.channel(kc).is_some_and(|ch| ch.archived));
+    // The homeserver itself refuses posts, whichever client sends them.
+    let post = kit.run("message.send", &json!({ "channel": kc.to_string(), "text": "still here?" }));
+    let post = match post {
+        Ok(v) => v.get("pending").and_then(Value::as_u64).and_then(|r| kit.wait_for(r, Duration::from_secs(30))).unwrap_or(Ok(v)),
+        Err(e) => Err(e),
+    };
+    assert!(post.is_err(), "posting in an archived channel fails: {post:?}");
+    // Only someone allowed to change the room can unarchive.
+    let un = kit
+        .run("channel.unarchive", &json!({ "channel": kc.to_string() }))
+        .ok()
+        .and_then(|v| v.get("pending").and_then(Value::as_u64))
+        .and_then(|r| kit.wait_for(r, Duration::from_secs(30)));
+    assert!(un.is_some_and(|r| r.is_err()), "Kit can't unarchive");
+
+    run(&mut jo, "channel.unarchive", json!({ "channel": c.to_string() }));
+    until(&mut jo, &mut kit, "Kit sees it active again", |_, k| k.state.channel(kc).is_some_and(|ch| !ch.archived));
+    run(&mut kit, "message.send", json!({ "channel": kc.to_string(), "text": "back in business" }));
+    until(&mut jo, &mut kit, "Jo gets the message", |j, _| j.state.messages.values().any(|m| m.text == "back in business"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

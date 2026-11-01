@@ -37,6 +37,7 @@ UI, the CLI and MCP are unchanged:
 | Formatting | Sent as `body` (ChatCraft markup) + `formatted_body` HTML rendered by ChatCraft's own parser (`*x*` is bold, as in Slack); received HTML (bold, italic, strike, code, links, pills, quotes, lists) converted back to markup (`crates/matrix/src/html.rs`). A ChatCraft message whose HTML re-renders from its body keeps its exact source |
 | Read state | `m.fully_read` + public read receipts |
 | Star | `m.favourite` tag |
+| Archive | Read-only for everyone: the level needed to post (`events_default`) is raised to admin, and `dev.chatcraft.archived` room state remembers the old level for unarchiving. Needs admin rights in the room; other Matrix clients see a read-only room |
 | History | The snapshot carries the latest 100 events per room; *Load earlier messages* (automatic when you scroll to the top) pages back with `/messages`. Timelines order by send time, so older pages slot in correctly |
 | Typing | `m.typing` notices (sent at most every 4 s while composing, cleared on send); shown above the composer |
 | Pin | `m.room.pinned_events` (shared with other clients) |
@@ -105,7 +106,7 @@ removes a device remotely after the homeserver asks for your password — use it
 
 - QR-code verification; a stricter trust policy (only send keys to verified devices) as an option;
   warnings when a verified person's identity changes.
-- Archiving over Matrix; images, tables and headings in received HTML are reduced to their text.
+- Images, tables and headings in received HTML are reduced to their text.
 - Encrypted public channels are possible in Matrix but not offered: anyone may join them, so
   encryption adds little and breaks history for newcomers.
 

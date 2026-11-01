@@ -122,7 +122,21 @@ async fn room_info(room: &Room) -> RoomInfo {
         members,
         pinned: room.pinned_event_ids().unwrap_or_default().iter().map(ToString::to_string).collect(),
         muted: false,
+        archived: state_content(room, ARCHIVED).await.and_then(|c| c.get("archived").and_then(Value::as_bool)).unwrap_or(false),
     }
+}
+
+/// The room state ChatCraft marks archived rooms with: `{"archived", "events_default_before"}`.
+const ARCHIVED: &str = "dev.chatcraft.archived";
+
+/// A room state event's content as JSON (empty state key).
+async fn state_content(room: &Room, event_type: &str) -> Option<Value> {
+    let raw = room.get_state_event(event_type.into(), "").await.ok()??;
+    let text = match &raw {
+        matrix_sdk::deserialized_responses::RawAnySyncOrStrippedState::Sync(r) => r.json().get().to_string(),
+        matrix_sdk::deserialized_responses::RawAnySyncOrStrippedState::Stripped(r) => r.json().get().to_string(),
+    };
+    serde_json::from_str::<Value>(&text).ok()?.get("content").cloned()
 }
 
 /// The account data type ChatCraft keeps saved items in.
@@ -895,7 +909,38 @@ impl Worker {
                 }
                 Ok(json!({ "removed": device }))
             }
-            Op::Archive { .. } => Err("archiving isn't available on Matrix yet".into()),
+            Op::Archive { channel, archived } => {
+                // Archived = read-only for everyone (the level needed to post is raised to admin)
+                // plus a marker that remembers the old level, so unarchiving restores it exactly.
+                let room = self.room(channel)?;
+                let mut levels = state_content(&room, "m.room.power_levels").await.unwrap_or_else(|| json!({}));
+                let marker = state_content(&room, ARCHIVED).await;
+                let send = |room: &Room, ty: &'static str, content: Value| {
+                    let room = room.clone();
+                    async move {
+                        room.send_state_event_raw(ty, "", content)
+                            .await
+                            .map_err(|e| format!("couldn't change the channel ({e}); archiving needs admin rights in the room"))
+                    }
+                };
+                if archived {
+                    let before = levels.get("events_default").cloned().unwrap_or(json!(0));
+                    send(&room, ARCHIVED, json!({ "archived": true, "events_default_before": before })).await?;
+                    if let Some(o) = levels.as_object_mut() {
+                        o.insert("events_default".into(), json!(100));
+                    }
+                    send(&room, "m.room.power_levels", levels).await?;
+                } else {
+                    let before = marker.as_ref().and_then(|m| m.get("events_default_before").cloned()).unwrap_or(json!(0));
+                    if let Some(o) = levels.as_object_mut() {
+                        o.insert("events_default".into(), before);
+                    }
+                    send(&room, "m.room.power_levels", levels).await?;
+                    send(&room, ARCHIVED, json!({ "archived": false })).await?;
+                }
+                self.map.set_archived(channel, archived);
+                Ok(Value::Null)
+            }
             Op::RenameWorkspace { .. } => Err("a Matrix homeserver has no workspace name to change".into()),
         }
     }
