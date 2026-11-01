@@ -321,7 +321,10 @@ pub(crate) fn plan(hub: &mut Hub, actor: UserId, op: Op, now: Ts) -> Result<Plan
         | Op::Recover { .. }
         | Op::SignOut
         | Op::Directory { .. }
-        | Op::JoinExternal { .. } => Err(HubError::Invalid("this needs a Matrix account".into())),
+        | Op::JoinExternal { .. }
+        | Op::Devices
+        | Op::VerifyDevice { .. }
+        | Op::RemoveDevice { .. } => Err(HubError::Invalid("this needs a Matrix account".into())),
         Op::RenameWorkspace { name } => {
             if !is_admin(&hub.state, actor) {
                 return Err(HubError::Forbidden("only admins can rename the workspace".into()));

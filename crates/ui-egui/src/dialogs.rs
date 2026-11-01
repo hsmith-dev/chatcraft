@@ -452,22 +452,25 @@ pub(crate) fn show(app: &mut ChatApp, ctx: &egui::Context, acts: &mut Vec<Act>) 
                     close = true;
                     return;
                 };
-                let who = app.session.state.user(v.user).map(|u| u.name().to_string()).unwrap_or_else(|| "this person".into());
+                // Verifying one of your own devices reads differently.
+                let own = Some(v.user) == app.session.me;
+                let who = if own { "your other device".to_string() } else { app.session.state.user(v.user).map(|u| u.name().to_string()).unwrap_or_else(|| "this person".into()) };
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
                     icons::paint(ui.painter(), r, Icon::Shield, t.accent);
-                    ui.label(RichText::new(format!("Verify {who}")).font(FontId::proportional(20.0)).strong().color(t.strong));
+                    let title = if own { "Verify your device".to_string() } else { format!("Verify {who}") };
+                    ui.label(RichText::new(title).font(FontId::proportional(20.0)).strong().color(t.strong));
                 });
                 ui.add_space(8.0);
                 let action = |name: &'static str| Act::Run(name, json!({ "flow": v.flow }));
                 match &v.stage {
                     VerifyStage::Requested => {
-                        ui.label(
-                            RichText::new(format!(
-                                "{who} wants to verify that you are really you, so you can both trust that no one is reading your encrypted messages."
-                            ))
-                            .color(t.text),
-                        );
+                        let ask = if own {
+                            "Another of your devices wants to verify this one, so it can trust it with your encrypted messages. If you didn't just ask for this on another device, don't continue.".to_string()
+                        } else {
+                            format!("{who} wants to verify that you are really you, so you can both trust that no one is reading your encrypted messages.")
+                        };
+                        ui.label(RichText::new(ask).color(t.text));
                         ui.add_space(6.0);
                         ui.label(RichText::new("You'll compare seven emoji with them — in person, or on a call you trust.").color(t.muted));
                         ui.add_space(12.0);
@@ -654,6 +657,113 @@ pub(crate) fn show(app: &mut ChatApp, ctx: &egui::Context, acts: &mut Vec<Act>) 
                         close = true;
                     }
                 });
+            }
+            Dialog::Devices { list, waiting, removing, message, pending_remove } => {
+                ui.set_width(560.0);
+                heading(ui, app, "Your devices");
+                ui.label(RichText::new("Everywhere you're signed in. Verify your devices so they can read your encrypted messages; sign out any you don't recognise.").color(t.muted));
+                ui.add_space(8.0);
+                let mut refresh = list.is_none() && waiting.is_none();
+                if let Some(req) = *pending_remove
+                    && let Some(r) = app.session.take_result(req)
+                {
+                    *pending_remove = None;
+                    match r {
+                        Ok(_) => {
+                            *removing = None;
+                            *message = Some(("Signed out.".into(), false));
+                            refresh = true;
+                        }
+                        Err(e) => *message = Some((e.to_string(), true)),
+                    }
+                }
+                if refresh {
+                    match app.session.run("security.devices", &json!({})) {
+                        Ok(v) => match v.get("pending").and_then(serde_json::Value::as_u64) {
+                            Some(req) => *waiting = Some(req),
+                            None => *list = v.get("devices").and_then(serde_json::Value::as_array).cloned(),
+                        },
+                        Err(e) => {
+                            *list = Some(Vec::new());
+                            *message = Some((e.to_string(), true));
+                        }
+                    }
+                }
+                if let Some(req) = *waiting
+                    && let Some(r) = app.session.take_result(req)
+                {
+                    *waiting = None;
+                    match r {
+                        Ok(v) => *list = v.get("devices").and_then(serde_json::Value::as_array).cloned(),
+                        Err(e) => *message = Some((e.to_string(), true)),
+                    }
+                }
+                if waiting.is_some() || pending_remove.is_some() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new("Working…").color(t.muted));
+                    });
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(150));
+                }
+                let now = chatcraft_engine::model::Ts::now();
+                for d in list.iter().flatten() {
+                    let id = d["id"].as_str().unwrap_or_default().to_string();
+                    let this = d["thisDevice"].as_bool().unwrap_or(false);
+                    let verified = d["verified"].as_bool().unwrap_or(false);
+                    Frame::new().inner_margin(Margin::symmetric(4, 6)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                            icons::paint(ui.painter(), r, Icon::Shield, if verified { t.accent } else { t.faint });
+                            ui.vertical(|ui| {
+                                let name = d["name"].as_str().unwrap_or_default();
+                                let badge = if this { "  · this device" } else { "" };
+                                ui.label(RichText::new(format!("{name}{badge}")).strong().color(t.strong));
+                                let seen = d["lastSeen"].as_u64().map(|ms| chatcraft_engine::model::Ts(i64::try_from(ms).unwrap_or(0)).ago(now)).unwrap_or_else(|| "never".into());
+                                let trust = if verified { "Verified" } else { "Not verified" };
+                                ui.label(RichText::new(format!("{id} · {trust} · last active {seen}")).small().color(t.muted));
+                            });
+                            if !this {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let b = egui::Button::new(RichText::new("Sign out").color(t.danger)).corner_radius(6);
+                                    if ui.add(b).clicked() {
+                                        *removing = Some((id.clone(), String::new()));
+                                        *message = None;
+                                    }
+                                    if !verified && ui.button("Verify").clicked() {
+                                        acts.push(Act::Run("security.verifyDevice", json!({ "device": id })));
+                                        close = true;
+                                    }
+                                });
+                            }
+                        });
+                    });
+                    if let Some((rid, password)) = removing.as_mut()
+                        && *rid == id
+                    {
+                        ui.horizontal(|ui| {
+                            let l = ui.label(RichText::new("Password").small().color(t.muted));
+                            let pw = ui.add(egui::TextEdit::singleline(password).password(true).desired_width(200.0)).labelled_by(l.id);
+                            pw.request_focus();
+                            let button = egui::Button::new(RichText::new("Sign it out").color(egui::Color32::WHITE)).fill(t.danger).corner_radius(6);
+                            let go = ui.add_enabled(pending_remove.is_none() && !password.is_empty(), button).clicked()
+                                || (pw.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !password.is_empty());
+                            if go {
+                                match app.session.run("security.removeDevice", &json!({ "device": rid.clone(), "password": password.clone() })) {
+                                    Ok(v) => *pending_remove = v.get("pending").and_then(serde_json::Value::as_u64),
+                                    Err(e) => *message = Some((e.to_string(), true)),
+                                }
+                            }
+                        });
+                    }
+                    ui.separator();
+                }
+                if let Some((text, error)) = message {
+                    ui.label(RichText::new(text.as_str()).color(if *error { t.danger } else { t.accent }));
+                }
+                ui.add_space(6.0);
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
             }
             Dialog::Shortcuts => {
                 ui.set_width(560.0);

@@ -286,6 +286,10 @@ pub(crate) fn popups(app: &mut ChatApp, ctx: &egui::Context, acts: &mut Vec<Act>
                         acts.push(Act::Run("profile.setPresence", json!({ "presence": if dnd { "active" } else { "dnd" } })));
                         close = true;
                     }
+                    if menu_item(ui, &t, "Your devices", "", false) {
+                        acts.push(Act::Ui("ui.devices"));
+                        close = true;
+                    }
                     if menu_item(ui, &t, "Encryption and key backup", "", false) {
                         acts.push(Act::Ui("ui.recovery"));
                         close = true;

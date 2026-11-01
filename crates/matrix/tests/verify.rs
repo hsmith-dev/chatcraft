@@ -17,7 +17,8 @@ fn env(k: &str) -> Option<String> {
 }
 
 fn register(hs: &str, user: &str, password: &str) {
-    let body = json!({ "username": user, "password": password, "auth": { "type": "m.login.dummy" } }).to_string();
+    // `inhibit_login`: registering must not leave a device behind.
+    let body = json!({ "username": user, "password": password, "auth": { "type": "m.login.dummy" }, "inhibit_login": true }).to_string();
     let out = std::process::Command::new("curl")
         .args(["-sf", "-X", "POST", "-H", "Content-Type: application/json", "-d", &body, &format!("{hs}/_matrix/client/v3/register")])
         .output()
@@ -45,11 +46,15 @@ fn run(s: &mut Session, id: &str, params: Value) -> Value {
 
 /// Pumps both sessions until `f` holds for them.
 fn until(a: &mut Session, b: &mut Session, what: &str, mut f: impl FnMut(&Session, &Session) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(60);
     while !f(a, b) {
         assert!(Instant::now() < deadline, "timed out waiting for: {what}");
         a.pump_wait(Duration::from_millis(100));
         b.pump_wait(Duration::from_millis(100));
+    }
+    if started.elapsed() > Duration::from_secs(2) {
+        eprintln!("slow: {what} took {:.1}s", started.elapsed().as_secs_f32());
     }
 }
 
@@ -269,5 +274,68 @@ fn directory_pins_saved_items_and_mutes_live_on_the_server() {
     assert!(quil.state.muted.get(&me).is_some_and(|s| s.contains(&qc)), "the mute survives a restart");
     let saved: Vec<&str> = quil.state.saved.get(&me).into_iter().flatten().filter_map(|m| quil.state.message(*m)).map(|m| m.text.as_str()).collect();
     assert_eq!(saved, vec!["house rules: be kind"], "the saved item survives a restart");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn your_own_devices_verify_each_other_and_can_be_signed_out_remotely() {
+    let (Some(hs), Some(_)) = (env("CHATCRAFT_TEST_HOMESERVER"), env("CHATCRAFT_TEST_REGISTER")) else {
+        eprintln!("skipped: set CHATCRAFT_TEST_HOMESERVER and CHATCRAFT_TEST_REGISTER=1");
+        return;
+    };
+    let tag = format!("{}{}", std::process::id(), Instant::now().elapsed().as_nanos() % 1000);
+    let name = format!("dora{tag}");
+    register(&hs, &name, "pw-dora-123");
+    let dir = std::env::temp_dir().join(format!("chatcraft-devices-{tag}"));
+    let mut laptop = session(&hs, &name, "pw-dora-123", &dir.join("laptop"));
+    let mut phone = session(&hs, &name, "pw-dora-123", &dir.join("phone"));
+
+    let devices = run(&mut laptop, "security.devices", json!({}));
+    let list = devices["devices"].as_array().unwrap().clone();
+    assert_eq!(list.len(), 2, "{devices}");
+    let other = list.iter().find(|d| d["thisDevice"] == false).unwrap();
+    assert_eq!(other["verified"], false, "a new device starts unverified");
+    let phone_id = other["id"].as_str().unwrap().to_string();
+
+    // The laptop asks; the phone is asked (to-device) and accepts; both compare emoji.
+    run(&mut laptop, "security.verifyDevice", json!({ "device": phone_id }));
+    until(&mut laptop, &mut phone, "the phone receives the request", |_, p| p.active_verification().is_some_and(|v| v.incoming));
+    run(&mut phone, "security.accept", json!({}));
+    until(&mut laptop, &mut phone, "both see emoji", |l, p| emoji(l).is_some() && emoji(p).is_some());
+    assert_eq!(emoji(&laptop), emoji(&phone));
+    run(&mut laptop, "security.confirm", json!({}));
+    run(&mut phone, "security.confirm", json!({}));
+    until(&mut laptop, &mut phone, "both finish", |l, p| stage(l) == Some(&VerifyStage::Done) && stage(p) == Some(&VerifyStage::Done));
+    let devices = run(&mut laptop, "security.devices", json!({}));
+    assert!(devices["devices"].as_array().unwrap().iter().any(|d| d["id"] == phone_id.as_str() && d["verified"] == true), "{devices}");
+
+    // A lost phone: sign it out from the laptop. A wrong password is refused.
+    assert!(
+        laptop
+            .run("security.removeDevice", &json!({ "device": phone_id, "password": "wrong" }))
+            .ok()
+            .and_then(|v| v.get("pending").and_then(Value::as_u64))
+            .and_then(|r| laptop.wait_for(r, Duration::from_secs(30)))
+            .is_some_and(|r| r.is_err())
+    );
+    run(&mut laptop, "security.removeDevice", json!({ "device": phone_id, "password": "pw-dora-123" }));
+    let devices = run(&mut laptop, "security.devices", json!({}));
+    assert_eq!(devices["devices"].as_array().unwrap().len(), 1);
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("phone/session.json")).unwrap()).unwrap();
+    let token = saved["access_token"].as_str().unwrap();
+    let code = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-H",
+            &format!("Authorization: Bearer {token}"),
+            &format!("{hs}/_matrix/client/v3/account/whoami"),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&code.stdout), "401", "the phone's session is revoked");
     let _ = std::fs::remove_dir_all(&dir);
 }
