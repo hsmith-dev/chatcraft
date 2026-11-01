@@ -368,3 +368,46 @@ fn typing_shows_up_and_ends_when_the_message_is_sent() {
     });
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn older_history_loads_page_by_page_in_order() {
+    let (Some(hs), Some(_)) = (env("CHATCRAFT_TEST_HOMESERVER"), env("CHATCRAFT_TEST_REGISTER")) else {
+        eprintln!("skipped: set CHATCRAFT_TEST_HOMESERVER and CHATCRAFT_TEST_REGISTER=1");
+        return;
+    };
+    let tag = format!("{}{}", std::process::id(), Instant::now().elapsed().as_nanos() % 1000);
+    let (a_name, b_name) = (format!("hal{tag}"), format!("ida{tag}"));
+    register(&hs, &a_name, "pw-hal-123");
+    register(&hs, &b_name, "pw-ida-123");
+    let dir = std::env::temp_dir().join(format!("chatcraft-history-{tag}"));
+    let mut hal = session(&hs, &a_name, "pw-hal-123", &dir.join("hal"));
+    let channel = format!("archive-{tag}");
+    let r = run(&mut hal, "channel.create", json!({ "name": channel }));
+    let c = chatcraft_engine::model::ChannelId(r["channel"].as_u64().unwrap());
+    let n = 230;
+    for i in 0..n {
+        run(&mut hal, "message.send", json!({ "channel": c.to_string(), "text": format!("msg {i:03}") }));
+    }
+    // Ida joins by address and starts with only recent history.
+    let server = env("CHATCRAFT_TEST_SERVER_NAME").unwrap_or_else(|| "localhost".into());
+    let mut ida = session(&hs, &b_name, "pw-ida-123", &dir.join("ida"));
+    run(&mut ida, "channel.join", json!({ "channel": format!("#{channel}:{server}") }));
+    drop(ida);
+    let mut ida = session(&hs, &b_name, "", &dir.join("ida"));
+    let ic = ida.state.channel_by_name(&channel).unwrap().id;
+    let texts = |s: &Session| s.state.timeline(ic).iter().filter(|m| m.text.starts_with("msg ")).map(|m| m.text.clone()).collect::<Vec<_>>();
+    let first = texts(&ida).len();
+    assert!(first < n, "the snapshot holds recent history only ({first})");
+    assert!(ida.may_have_older(ic));
+    let mut pages = 0;
+    while ida.may_have_older(ic) {
+        run(&mut ida, "message.loadOlder", json!({ "channel": ic.to_string() }));
+        pages += 1;
+        assert!(pages < 10, "paging never ends");
+    }
+    let all = texts(&ida);
+    eprintln!("snapshot {first}, then {pages} page(s): {} messages", all.len());
+    let expected: Vec<String> = (0..n).map(|i| format!("msg {i:03}")).collect();
+    assert_eq!(all, expected, "every message, in the order it was sent");
+    let _ = std::fs::remove_dir_all(&dir);
+}

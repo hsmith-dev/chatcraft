@@ -125,3 +125,28 @@ fn titles_and_resolution() {
     assert_eq!(s.resolve_user("U2"), Some(UserId(2)));
     assert_eq!(s.resolve_user("U99"), None);
 }
+
+#[test]
+fn older_history_loaded_later_still_sorts_by_time() {
+    let mut s = seeded();
+    // Message 1 (ts 1000) is in #general. Ids 20 and 21 arrive later but were sent earlier.
+    let mut old = msg(20, 1, 2, "older");
+    old.ts = Ts(500);
+    let mut oldest = msg(21, 1, 2, "oldest");
+    oldest.ts = Ts(100);
+    s.apply_event(&Event::MessagePosted { message: old });
+    s.apply_event(&Event::MessagePosted { message: oldest });
+    let tl: Vec<u64> = s.timeline(ChannelId(1)).iter().map(|m| m.id.0).collect();
+    assert_eq!(tl, vec![21, 20, 1], "time order, not id order");
+    assert_eq!(s.latest(ChannelId(1)), Some(MessageId(1)));
+    // Reading up to message 1 reads the older ones too.
+    s.apply_event(&Event::ReadMarked { user: UserId(3), channel: ChannelId(1), upto: MessageId(1) });
+    assert_eq!(s.unread(UserId(3), ChannelId(1)), (0, 0));
+    // An older message never moves the cursor back.
+    s.apply_event(&Event::ReadMarked { user: UserId(3), channel: ChannelId(1), upto: MessageId(21) });
+    assert_eq!(s.last_read(UserId(3), ChannelId(1)), MessageId(1));
+    // A snapshot keeps the order.
+    let mut back: State = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+    back.reindex();
+    assert_eq!(back.timeline(ChannelId(1)).iter().map(|m| m.id.0).collect::<Vec<_>>(), vec![21, 20, 1]);
+}

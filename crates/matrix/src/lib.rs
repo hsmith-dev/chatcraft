@@ -161,4 +161,8 @@ impl Transport for MatrixTransport {
     fn describe(&self) -> String {
         self.label.clone()
     }
+
+    fn pages_history(&self) -> bool {
+        true
+    }
 }

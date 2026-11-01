@@ -168,6 +168,11 @@ pub enum Op {
         channel: ChannelId,
         typing: bool,
     },
+    /// Loads the page of history before what this replica holds. Answers
+    /// `{"loaded": n, "more": bool}`.
+    LoadOlder {
+        channel: ChannelId,
+    },
     /// Lists the account's signed-in devices (Matrix only).
     Devices,
     /// Starts verifying another of your own devices by emoji comparison (Matrix only).

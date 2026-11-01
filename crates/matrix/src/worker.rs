@@ -154,6 +154,8 @@ struct Worker {
     signed_out: bool,
     /// Saved items as stored in account data: the truth, including items outside loaded history.
     saved: Vec<(String, String)>,
+    /// Per room: the pagination token for the next older page (`None`: the beginning is loaded).
+    older: std::collections::HashMap<String, Option<String>>,
 }
 
 /// How many recent events of each conversation the welcome snapshot carries.
@@ -224,6 +226,9 @@ impl Worker {
                     for ev in page.chunk.iter().rev() {
                         self.timeline_event(room.room_id().as_str(), ev);
                     }
+                    // Where the next older page starts (none: this is the room's beginning).
+                    let more = if page.chunk.is_empty() { None } else { page.end.clone() };
+                    self.older.insert(room.room_id().to_string(), more);
                 }
                 Err(e) => log::warn!("history of {}: {e}", room.room_id()),
             }
@@ -803,6 +808,24 @@ impl Worker {
                 let info = self.info(&joined).await;
                 Ok(json!({ "channel": self.map.upsert_room(&info) }))
             }
+            Op::LoadOlder { channel } => {
+                let room = self.room(channel)?;
+                let rid = room.room_id().to_string();
+                let Some(Some(token)) = self.older.get(&rid).cloned() else {
+                    return Ok(json!({ "loaded": 0, "more": false }));
+                };
+                let mut opts = matrix_sdk::room::MessagesOptions::backward().from(Some(token.as_str()));
+                opts.limit = UInt::from(HISTORY);
+                let page = room.messages(opts).await.map_err(err)?;
+                for ev in page.chunk.iter().rev() {
+                    self.timeline_event(&rid, ev);
+                }
+                let loaded = page.chunk.len();
+                let next = if page.chunk.is_empty() { None } else { page.end.clone() };
+                let more = next.is_some();
+                self.older.insert(rid, next);
+                Ok(json!({ "loaded": loaded, "more": more }))
+            }
             Op::Typing { channel, typing } => {
                 self.room(channel)?.typing_notice(typing).await.map_err(err)?;
                 Ok(Value::Null)
@@ -938,6 +961,7 @@ pub(crate) async fn run(
         outbox: Vec::new(),
         signed_out: false,
         saved: Vec::new(),
+        older: std::collections::HashMap::new(),
     };
 
     if let Err(e) = w.start(fresh).await {

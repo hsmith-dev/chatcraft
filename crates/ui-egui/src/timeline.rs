@@ -232,7 +232,27 @@ fn messages(app: &mut ChatApp, ui: &mut Ui, c: chatcraft_engine::model::ChannelI
     let marker = app.session.view.unread_from;
     egui::ScrollArea::vertical().id_salt(("timeline", c.0)).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
         if start == 0 {
-            intro(app, ui, c);
+            if app.session.may_have_older(c) {
+                // Older history lives on the server: load it when the top comes into view.
+                ui.add_space(10.0);
+                ui.vertical_centered(|ui| {
+                    if app.session.loading_older(c) {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(RichText::new("Loading earlier messages…").color(t.muted));
+                        });
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(150));
+                    } else {
+                        let r = ui.link("Load earlier messages");
+                        if r.clicked() || ui.is_rect_visible(r.rect) {
+                            acts.push(Act::Run("message.loadOlder", json!({ "channel": c.to_string() })));
+                        }
+                    }
+                });
+                ui.add_space(10.0);
+            } else {
+                intro(app, ui, c);
+            }
         }
         let mut prev: Option<&Message> = None;
         for m in shown {
