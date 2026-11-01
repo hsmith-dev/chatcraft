@@ -39,6 +39,7 @@ pub enum Icon {
     Sun,
     Mute,
     Archive,
+    Shield,
 }
 
 fn s(c: Color32, w: f32) -> Stroke {
@@ -234,6 +235,10 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, c: Color32) {
         Icon::Mute => {
             paint(p, r, Icon::Bell, c);
             poly(p, r, &[(0.12, 0.12), (0.88, 0.88)], st);
+        }
+        Icon::Shield => {
+            poly(p, r, &[(0.5, 0.1), (0.85, 0.24), (0.8, 0.58), (0.5, 0.9), (0.2, 0.58), (0.15, 0.24), (0.5, 0.1)], st);
+            poly(p, r, &[(0.36, 0.5), (0.47, 0.62), (0.66, 0.38)], st);
         }
         Icon::Archive => {
             p.rect_stroke(Rect::from_min_max(at(r, 0.12, 0.18), at(r, 0.88, 0.36)), 2.0, st, egui::StrokeKind::Middle);

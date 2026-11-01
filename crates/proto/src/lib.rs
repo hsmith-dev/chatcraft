@@ -59,6 +59,9 @@ pub enum Op {
         /// Invited at creation.
         #[serde(default)]
         members: Vec<UserId>,
+        /// People not yet known to this replica, by Matrix ID (`@bob:example.org`).
+        #[serde(default)]
+        external: Vec<String>,
     },
     JoinChannel {
         channel: ChannelId,
@@ -69,6 +72,8 @@ pub enum Op {
     Invite {
         channel: ChannelId,
         users: Vec<UserId>,
+        #[serde(default)]
+        external: Vec<String>,
     },
     Remove {
         channel: ChannelId,
@@ -93,6 +98,8 @@ pub enum Op {
     /// Opens (or finds) the direct message with these people (the sender is added).
     OpenDm {
         users: Vec<UserId>,
+        #[serde(default)]
+        external: Vec<String>,
     },
     SetProfile {
         #[serde(default)]

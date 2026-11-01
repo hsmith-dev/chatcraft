@@ -21,6 +21,7 @@ chatcraft-search = { path = "crates/search" }
 chatcraft-hub = { path = "crates/hub" }
 chatcraft-engine = { path = "crates/engine" }
 chatcraft-net = { path = "crates/net" }
+chatcraft-matrix = { path = "crates/matrix" }
 chatcraft-mcp = { path = "crates/mcp" }
 chatcraft-ui-egui = { path = "crates/ui-egui" }
 

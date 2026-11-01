@@ -77,6 +77,11 @@ fn header(app: &mut ChatApp, ui: &mut Ui, c: chatcraft_engine::model::ChannelId,
                     let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
                     icons::paint(ui.painter(), r, Icon::Mute, t.muted);
                 }
+                if ch.encrypted {
+                    let (r, resp) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                    icons::paint(ui.painter(), r, Icon::Shield, t.accent);
+                    resp.on_hover_text("End-to-end encrypted: only the people in this conversation can read it, not the server.");
+                }
             });
             let sub = if !ch.topic.is_empty() {
                 ch.topic.clone()
@@ -292,6 +297,13 @@ pub(crate) fn row(app: &mut ChatApp, ui: &mut Ui, m: &Message, compact: bool, in
                 }
                 if m.deleted {
                     ui.label(RichText::new("This message was deleted.").italics().color(t.muted));
+                } else if m.undecryptable {
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                        icons::paint(ui.painter(), r, Icon::Lock, t.muted);
+                        ui.label(RichText::new("Can't decrypt this message yet: this device doesn't have its key.").italics().color(t.muted))
+                            .on_hover_text("Encrypted messages can only be read on devices that had the key when it was sent, or that received it later from another of your devices.");
+                    });
                 } else if editing {
                     edit_box(app, ui, m.id, acts);
                 } else {
@@ -399,7 +411,7 @@ fn reactions(app: &mut ChatApp, ui: &mut Ui, m: &Message, acts: &mut Vec<Act>) {
         ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
         for (name, who) in &m.reactions {
             let mine = who.contains(&me);
-            let glyph = emoji::lookup(name).map(str::to_string).unwrap_or_else(|| format!(":{name}:"));
+            let glyph = emoji::lookup(name).map(str::to_string).unwrap_or_else(|| if name.is_ascii() { format!(":{name}:") } else { name.clone() });
             let (fill, stroke) = if mine { (t.reaction_mine_bg, t.reaction_mine_border) } else { (t.reaction_bg, t.reaction_border) };
             let r = Frame::new().fill(fill).stroke(Stroke::new(1.0, stroke)).corner_radius(12).inner_margin(Margin::symmetric(7, 1)).show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -678,6 +690,12 @@ pub(crate) fn composer(app: &mut ChatApp, ui: &mut Ui, target: Target, acts: &mu
                     }
                     text.push('@');
                     ctx.memory_mut(|m| m.request_focus(id));
+                }
+                let encrypted = app.session.view.channel.and_then(|c| app.session.state.channel(c)).is_some_and(|c| c.encrypted);
+                if encrypted {
+                    let (r, resp) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                    icons::paint(ui.painter(), r, Icon::Shield, t.accent);
+                    resp.on_hover_text("Messages here are end-to-end encrypted");
                 }
                 if let Target::Thread(_) = target {
                     let ch = app.session.view.channel.map(|c| app.session.state.title(c, app.session.me)).unwrap_or_default();

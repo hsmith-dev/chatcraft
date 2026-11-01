@@ -4,9 +4,21 @@ _Status: 2026-10-31 · revision 1_
 
 Ranked: work from the top. Each gap names the catalog command ids it unlocks, if any.
 
+**Direction (2026-11-01): ChatCraft is a Matrix client with end-to-end encryption** (see
+[matrix.md](matrix.md)). Gaps 0.x are the encryption work in progress and come first.
+
+0.1 **Device verification and cross-signing** (SAS emoji and QR), trust indicators per person and device, warnings for unverified devices.
+0.2 **Key backup and recovery** (encrypted server-side backup, recovery key), so new devices can read history; secret storage (4S).
+0.3 **OS keychain** for the store passphrase and access token (macOS Keychain, Windows Credential Manager, Secret Service).
+0.4 **Late keys**: retry decryption when a room key arrives after the message.
+0.5 **Sign-in UI** (homeserver, user, password, SSO/OIDC) instead of command-line flags; sign out and device management.
+0.6 **Rich text from other clients**: render `formatted_body` HTML (bold, links, pills) instead of the plain body.
+0.7 **Matrix coverage**: room directory browsing, pins (`m.room.pinned_events`), saved items and mutes (account data / push rules), archiving (tombstones), history paging, typing and read receipts display.
+0.8 **Browser client** over Matrix (matrix-sdk's IndexedDB store on wasm).
+0.9 **Retire `chatcraft-server`** once Matrix covers its features (or keep it as a tiny self-host option).
+
 1. **Files and images** (`file.upload`, `file.preview`, `file.list`, `search.files`). Biggest missing piece for daily use.
-2. **Per-user authentication.** Today a shared join token lets anyone holding it sign in as any *unused* handle; existing handles are protected only by the token. Passwords/invite links first, OIDC/SSO later (`admin.sso`).
-3. **Native TLS.** `ws://` only; production needs a reverse proxy today.
+2. ~~Per-user authentication~~ and ~~TLS~~: provided by the Matrix homeserver (accounts, SSO, `https`). Still open for the legacy `chatcraft-server`.
 4. **Notifications.** In-app toasts exist; OS notifications, badges, schedules and keywords don't (`notifications.schedule`, `notifications.keywords`, `notifications.level`).
 5. **Browser client to a server.** The web build runs the demo only.
 6. **Message lifecycle**: edit history, mark unread, reminders, scheduled send, forward (`message.history`, `message.markUnread`, `message.remind`, `message.schedule`, `message.forward`).

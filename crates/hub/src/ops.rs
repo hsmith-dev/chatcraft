@@ -89,6 +89,11 @@ fn users_exist(s: &State, users: &[UserId]) -> Result<(), HubError> {
 
 #[allow(clippy::cognitive_complexity)]
 pub(crate) fn plan(hub: &mut Hub, actor: UserId, op: Op, now: Ts) -> Result<Plan, HubError> {
+    if let Op::CreateChannel { external, .. } | Op::Invite { external, .. } | Op::OpenDm { external, .. } = &op
+        && let Some(x) = external.first()
+    {
+        return Err(HubError::NotFound(format!("user {x}")));
+    }
     match op {
         Op::PostMessage { channel, text, thread, broadcast } => post(hub, actor, channel, &text, thread, broadcast, now),
         Op::EditMessage { message: id, text } => {
@@ -144,7 +149,7 @@ pub(crate) fn plan(hub: &mut Hub, actor: UserId, op: Op, now: Ts) -> Result<Plan
             }
             ok(vec![Event::PinChanged { message: id, pinned, by: actor }])
         }
-        Op::CreateChannel { name, private, topic, purpose, members } => {
+        Op::CreateChannel { name, private, topic, purpose, members, .. } => {
             let s = &hub.state;
             let name = unique_name(s, &name, None)?;
             users_exist(s, &members)?;
@@ -154,7 +159,8 @@ pub(crate) fn plan(hub: &mut Hub, actor: UserId, op: Op, now: Ts) -> Result<Plan
             set.insert(actor);
             let id = hub.alloc_channel();
             let kind = if private { ChannelKind::Private } else { ChannelKind::Public };
-            let channel = Channel { id, name, kind, topic, purpose, members: set, archived: false, created_by: actor, created: now };
+            let channel =
+                Channel { id, name, kind, topic, purpose, members: set, archived: false, encrypted: false, created_by: actor, created: now };
             Ok((vec![Event::ChannelCreated { channel }], json!({ "channel": id }), Vec::new()))
         }
         Op::JoinChannel { channel: id } => {
@@ -182,7 +188,7 @@ pub(crate) fn plan(hub: &mut Hub, actor: UserId, op: Op, now: Ts) -> Result<Plan
             }
             ok(vec![Event::MemberLeft { channel: id, user: actor, by: None }])
         }
-        Op::Invite { channel: id, users } => {
+        Op::Invite { channel: id, users, .. } => {
             let s = &hub.state;
             let c = writable(s, id, actor)?;
             if c.kind.is_dm() {
@@ -242,7 +248,7 @@ pub(crate) fn plan(hub: &mut Hub, actor: UserId, op: Op, now: Ts) -> Result<Plan
             }
             ok(vec![Event::ChannelArchived { channel: id, archived, by: actor }])
         }
-        Op::OpenDm { users } => {
+        Op::OpenDm { users, .. } => {
             let s = &hub.state;
             users_exist(s, &users)?;
             let mut set: BTreeSet<UserId> = users.into_iter().collect();

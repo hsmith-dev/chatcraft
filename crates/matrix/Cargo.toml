@@ -1,0 +1,24 @@
+[package]
+name = "chatcraft-matrix"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ChatCraft over Matrix: a Transport that speaks the Matrix client-server API with end-to-end encryption (matrix-rust-sdk), mapping rooms and events to the ChatCraft model"
+
+[lints]
+workspace = true
+
+[dependencies]
+chatcraft-core = { workspace = true }
+chatcraft-model = { workspace = true }
+chatcraft-proto = { workspace = true }
+chatcraft-text = { workspace = true }
+chatcraft-engine = { workspace = true }
+matrix-sdk = { version = "0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs", "markdown"] }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+getrandom = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

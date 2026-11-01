@@ -43,8 +43,35 @@ pub(super) fn commands() -> Vec<CommandSpec> {
     ]
 }
 
-fn users(s: &Session, v: &Value, key: &str) -> Result<Vec<UserId>, CmdError> {
-    p::list(v, key).iter().map(|u| s.resolve_user(u)).collect()
+/// Known people, plus Matrix IDs (`@bob:example.org`) this replica hasn't met yet.
+fn split_users(s: &Session, v: &Value, key: &str) -> Result<(Vec<UserId>, Vec<String>), CmdError> {
+    let mut known = Vec::new();
+    let mut external = Vec::new();
+    for u in p::list(v, key) {
+        match s.resolve_user(&u) {
+            Ok(id) => known.push(id),
+            Err(_) if is_mxid(&u) => external.push(u),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok((known, external))
+}
+
+/// `@localpart:server`.
+fn is_mxid(s: &str) -> bool {
+    s.strip_prefix('@').and_then(|r| r.split_once(':')).is_some_and(|(l, d)| !l.is_empty() && !d.is_empty()) && !s.contains(char::is_whitespace)
+}
+
+/// Both lists of `users` and `user`.
+fn people(s: &Session, v: &Value) -> Result<(Vec<UserId>, Vec<String>), CmdError> {
+    let (mut list, mut external) = split_users(s, v, "users")?;
+    let (more, more_ext) = split_users(s, v, "user")?;
+    list.extend(more);
+    external.extend(more_ext);
+    if list.is_empty() && external.is_empty() {
+        return Err(CmdError::Params("`users` is required".into()));
+    }
+    Ok((list, external))
 }
 
 fn ok(r: CmdResult) -> CmdResult {
@@ -53,26 +80,21 @@ fn ok(r: CmdResult) -> CmdResult {
 
 fn create(s: &mut Session, v: &Value) -> CmdResult {
     let name = p::req_str(v, "name")?.to_string();
-    let members = users(s, v, "members")?;
+    let (members, external) = split_users(s, v, "members")?;
     let op = Op::CreateChannel {
         name,
         private: p::bool(v, "private").unwrap_or(false),
         topic: p::str(v, "topic").unwrap_or_default().into(),
         purpose: p::str(v, "purpose").unwrap_or_default().into(),
         members,
+        external,
     };
-    let r = s.submit(op)?;
-    if let Some(c) = r.get("channel").and_then(Value::as_u64) {
-        s.open_channel(chatcraft_core::ChannelId(c));
-    }
-    Ok(r)
+    s.submit_and_open(op)
 }
 
 fn join(s: &mut Session, v: &Value) -> CmdResult {
     let c = s.target_channel(v)?;
-    let r = s.submit(Op::JoinChannel { channel: c })?;
-    s.open_channel(c);
-    Ok(r)
+    s.submit_and_open(Op::JoinChannel { channel: c })
 }
 
 fn leave(s: &mut Session, v: &Value) -> CmdResult {
@@ -82,12 +104,8 @@ fn leave(s: &mut Session, v: &Value) -> CmdResult {
 
 fn invite(s: &mut Session, v: &Value) -> CmdResult {
     let c = s.target_channel(v)?;
-    let mut list = users(s, v, "users")?;
-    list.extend(users(s, v, "user")?);
-    if list.is_empty() {
-        return Err(CmdError::Params("`users` is required".into()));
-    }
-    ok(s.submit(Op::Invite { channel: c, users: list }))
+    let (list, external) = people(s, v)?;
+    ok(s.submit(Op::Invite { channel: c, users: list, external }))
 }
 
 fn remove(s: &mut Session, v: &Value) -> CmdResult {
@@ -154,16 +172,8 @@ fn mark_all_read(s: &mut Session, _: &Value) -> CmdResult {
 }
 
 fn dm_open(s: &mut Session, v: &Value) -> CmdResult {
-    let mut list = users(s, v, "users")?;
-    list.extend(users(s, v, "user")?);
-    if list.is_empty() {
-        return Err(CmdError::Params("`users` is required".into()));
-    }
-    let r = s.submit(Op::OpenDm { users: list })?;
-    if let Some(c) = r.get("channel").and_then(Value::as_u64) {
-        s.open_channel(chatcraft_core::ChannelId(c));
-    }
-    Ok(r)
+    let (list, external) = people(s, v)?;
+    s.submit_and_open(Op::OpenDm { users: list, external })
 }
 
 fn browse(s: &mut Session, v: &Value) -> CmdResult {

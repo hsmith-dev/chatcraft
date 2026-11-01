@@ -82,6 +82,12 @@ fn row(ui: &mut Ui, app: &ChatApp, c: &ChannelSummary, acts: &mut Vec<Act>) {
             ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(inner.right_center() - vec2(30.0, 9.0), vec2(30.0, 18.0))));
         badge(&mut child, c.mentions, t.badge, t.badge_fg);
     }
+    if s.state.channel(c.id).is_some_and(|ch| ch.encrypted) && !c.kind.is_dm() && c.kind != ChannelKind::Private {
+        // Public channels are rarely encrypted; mark the exception (private rooms already show a lock).
+        let r =
+            egui::Rect::from_center_size(inner.right_center() - vec2(if c.mentions > 0 && !selected { 44.0 } else { 14.0 }, 0.0), vec2(12.0, 12.0));
+        icons::paint(ui.painter(), r, Icon::Shield, fg);
+    }
     let resp = if let Some(peer) = c.peer.and_then(|p| s.state.user(p)) {
         let mut tip = format!("{} · {}", peer.name(), peer.presence.label());
         if !peer.status.text.is_empty() {

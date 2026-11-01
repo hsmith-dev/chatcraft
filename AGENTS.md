@@ -39,7 +39,7 @@ We reproduce **behaviour**, never code or assets.
 | L2 | `proto`, `store`, `search` | wire frames and ops; the append-only JSONL journal; search with modifiers |
 | L3 | `hub` | the authority: validation, permissions, ids, visibility; the demo workspace — pure, no I/O |
 | L4 | `engine` | client `Session` (replica, view, drafts), `Transport` + in-process `Loopback`, **command registry**, Slack/Teams catalog |
-| L5 | `net`, `mcp` | WebSocket server + reconnecting client (native only); MCP server |
+| L5 | `matrix`, `net`, `mcp` | Matrix transport with E2EE (the network protocol); legacy WebSocket server/client; MCP server |
 | L6 | `ui-egui` | the egui front end (swappable) |
 | apps | `chatcraft`, `chatcraft-cli`, `chatcraft-server`, `chatcraft-web` | binaries |
 
@@ -50,6 +50,12 @@ We reproduce **behaviour**, never code or assets.
 - **Layering** is enforced by `cargo xtask layers`. Nothing below L6 depends on egui/eframe/winit/rfd. The UI is thin and reads `Session`; colours come from `theme::Tokens`.
 - **Time goes through `chrono`** and `Ts` (`core`); never hand-roll calendar math. The UI applies the viewer's UTC offset (`ChatApp::utc_offset_minutes`).
 - **Rust only** (no handwritten JS/TS beyond the web shell's HTML). **Never break wasm** (`cargo xtask wasm`).
+
+## Matrix and encryption
+- The network protocol is **Matrix** (`crates/matrix`, `docs/matrix.md`); the homeserver is the authority there. New network features map to Matrix events/APIs, not to new ChatCraft frames.
+- Encryption is never optional for private conversations and DMs. Never log, persist or display decrypted content outside the replica; secrets (store passphrase, tokens) come from the OS CSPRNG and are written 0600.
+- Treat everything from the homeserver as untrusted: e.g. edits are accepted only from the original author (`mapper.rs`).
+- `crates/matrix/tests/e2ee.rs` must pass against a real homeserver before encryption changes land (see `docs/matrix.md` › Testing).
 
 ## Quality gates
 Before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, doctests, assets, layers, wasm). Scope day-to-day builds to the crates you touched (`cargo test -p chatcraft-hub`). One task id per commit (`M1.3: message edit history`). `main` is never pushed to directly: branch `feat/…`, `fix/…`, `docs/…`, open a PR.

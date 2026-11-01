@@ -42,12 +42,21 @@ impl B {
         self.op(who, Op::React { message: m, emoji: emoji.into(), on: true }).map(drop)
     }
     fn channel(&mut self, who: UserId, name: &str, private: bool, topic: &str, purpose: &str, members: &[UserId]) -> Result<ChannelId, HubError> {
-        let r =
-            self.op(who, Op::CreateChannel { name: name.into(), private, topic: topic.into(), purpose: purpose.into(), members: members.to_vec() })?;
+        let r = self.op(
+            who,
+            Op::CreateChannel {
+                name: name.into(),
+                private,
+                topic: topic.into(),
+                purpose: purpose.into(),
+                members: members.to_vec(),
+                external: vec![],
+            },
+        )?;
         Ok(r.get("channel").and_then(serde_json::Value::as_u64).map(ChannelId).unwrap_or_default())
     }
     fn dm(&mut self, who: UserId, with: &[UserId]) -> Result<ChannelId, HubError> {
-        let r = self.op(who, Op::OpenDm { users: with.to_vec() })?;
+        let r = self.op(who, Op::OpenDm { users: with.to_vec(), external: vec![] })?;
         Ok(r.get("channel").and_then(serde_json::Value::as_u64).map(ChannelId).unwrap_or_default())
     }
     fn read(&mut self, who: UserId, ch: ChannelId, upto: MessageId) -> Result<(), HubError> {

@@ -107,6 +107,8 @@ pub struct Session {
     acks: BTreeMap<u64, Ack>,
     /// The request `submit` is answering right now (its error goes to the caller, not a notice).
     inline_req: Option<u64>,
+    /// Requests whose answer names a conversation to open (create, join, new DM) when it arrives.
+    open_on_ack: BTreeSet<u64>,
 }
 
 impl Session {
@@ -130,6 +132,7 @@ impl Session {
             awaited: BTreeSet::new(),
             acks: BTreeMap::new(),
             inline_req: None,
+            open_on_ack: BTreeSet::new(),
         };
         s.pump();
         s
@@ -201,6 +204,21 @@ impl Session {
         }
     }
 
+    /// Like [`Session::submit`], then opens the conversation named by the answer's `channel` —
+    /// now if the answer is immediate, otherwise when it arrives.
+    pub fn submit_and_open(&mut self, op: Op) -> CmdResult {
+        let req = self.next_req;
+        let r = self.submit(op)?;
+        match r.get("channel").and_then(Value::as_u64) {
+            Some(c) => self.open_channel(ChannelId(c)),
+            None if r.get("pending").is_some() => {
+                self.open_on_ack.insert(req);
+            }
+            None => {}
+        }
+        Ok(r)
+    }
+
     fn take_ack(&mut self, req: u64) -> Option<CmdResult> {
         let a = self.acks.remove(&req)?;
         self.awaited.remove(&req);
@@ -233,6 +251,15 @@ impl Session {
         self.me.is_some()
     }
 
+    /// Waits up to `timeout` for something to arrive, then applies it (headless tools and
+    /// tests; never call from the UI thread). Returns whether anything arrived.
+    pub fn pump_wait(&mut self, timeout: Duration) -> bool {
+        let frames = self.link.wait(timeout);
+        let any = !frames.is_empty();
+        self.handle(frames);
+        any
+    }
+
     /// Applies whatever has arrived. Call once per frame.
     pub fn pump(&mut self) -> bool {
         let frames = self.link.poll();
@@ -258,6 +285,12 @@ impl Session {
                     self.after_event(&s.event);
                 }
                 ServerFrame::Ack { req, ok, result, error } => {
+                    if self.open_on_ack.remove(&req)
+                        && ok
+                        && let Some(c) = result.get("channel").and_then(Value::as_u64)
+                    {
+                        self.open_channel(ChannelId(c));
+                    }
                     if !ok
                         && self.inline_req != Some(req)
                         && let Some(e) = &error
@@ -292,7 +325,12 @@ impl Session {
         self.state = state;
         let visible = self.view.channel.is_some_and(|c| self.state.channel(c).is_some());
         if !visible {
+            // The workspace's default channel, else the first conversation in the sidebar (Matrix
+            // has no #general).
             self.view.channel = self.state.workspace.default_channel.filter(|c| self.state.channel(*c).is_some());
+            if self.view.channel.is_none() {
+                self.view.channel = self.sidebar().order().next().map(|c| c.id);
+            }
             self.view.unread_from = self.view.channel.and_then(|c| self.first_unread(c));
         }
     }

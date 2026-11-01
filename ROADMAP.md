@@ -16,11 +16,15 @@ Details: [docs/roadmap.md](docs/roadmap.md) (milestones), [docs/gaps.md](docs/ga
 list), [docs/target-app-parity.md](docs/target-app-parity.md) (assessment),
 [docs/parity-checklist.md](docs/parity-checklist.md) (generated).
 
+**Direction change (2026-11-01):** following storytold/artcraft#2138, ChatCraft speaks Matrix with
+end-to-end encryption instead of its own protocol. See [docs/matrix.md](docs/matrix.md).
+
 ## Milestones
 
 | | Milestone | Headline |
 |---|---|---|
 | ✅ | **M0 Foundations** | Layered workspace, event-sourced hub, journal, server, desktop/CLI/MCP/web, demo workspace |
+| 🟡 | **M1-E Matrix + E2EE** | Matrix transport, encrypted private channels and DMs, device store, E2EE integration test — **in progress**: verification, key backup, sign-in UI next |
 | ⬜ | **M1 Daily driver** | Files and images, per-user auth, TLS, OS notifications, edit history, typing indicators, unread view, mark unread, reminders |
 | ⬜ | **M2 Teams-shaped** | Teams (channel groups), sections, channel tabs, scheduled/priority messages, read receipts, polls, import from Slack/Teams exports |
 | ⬜ | **M3 Calls** | Huddles / voice and video calls, screen share (WebRTC), meetings and calendar |
@@ -29,4 +33,5 @@ list), [docs/target-app-parity.md](docs/target-app-parity.md) (assessment),
 
 ## Progress log
 
+- **2026-11-01** — M1-E started: `chatcraft-matrix` transport (matrix-rust-sdk 0.19), encrypted private channels and DMs, persistent device store, undecryptable-message and encryption indicators in the UI, `--matrix` in desktop/CLI, E2EE integration test against Synapse (server holds ciphertext only).
 - **2026-10-31** — M0 landed: 11 crates + 4 apps, 65 tests, `cargo xtask ci` green. Clean-room rules, asset policy and BMad planning set up.

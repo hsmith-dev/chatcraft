@@ -13,12 +13,21 @@ L1  model     Workspace, User, Channel, Message · Event · State (event-sourced
 L2  proto     Op · ClientFrame · ServerFrame      store   JSONL journal      search  query + rank
 L3  hub       the authority: validate Op → Events, ids, permissions, visibility; demo workspace
 L4  engine    Session (replica + view + drafts) · Transport (Loopback) · commands · catalog
-L5  net       WebSocket server + reconnecting client (native)     mcp  MCP over stdio
+L5  matrix    Matrix client transport, E2EE (matrix-rust-sdk)      net  own WebSocket server (legacy)      mcp  MCP
 L6  ui-egui   ChatApp: panels draw from Session, push Acts, Acts run commands
     apps      chatcraft (desktop) · chatcraft-cli · chatcraft-server · chatcraft-web
 ```
 
-## Data flow
+## Transports
+
+- **Matrix** (`crates/matrix`, the network protocol going forward): the client talks to any Matrix
+  homeserver; encryption is end to end. The homeserver, not our hub, is the authority. See
+  [matrix.md](matrix.md).
+- **Loopback** (`engine`): the in-process hub for the demo workspace, the web build and tests.
+- **ChatCraft protocol** (`net`, `chatcraft-server`): the original WebSocket protocol, kept for
+  now as a minimal self-host option and as a test bed; superseded by Matrix.
+
+## Data flow (in-process hub and ChatCraft protocol)
 
 1. A person clicks, types a shortcut, or an agent calls a tool → `Session::run(id, params)`.
 2. A mutating command builds an `Op` and `Session::submit`s it through its `Transport`.

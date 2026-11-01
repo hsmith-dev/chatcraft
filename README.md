@@ -29,8 +29,11 @@
 - **Familiar.** Sidebar with channels and DMs, unread and mention badges, threads in a side pane,
   hover actions, emoji reactions, `*bold*` / `_italic_` / `` `code` `` formatting, `@mentions`,
   `#channel` links, Enter to send, Up to edit your last message, Ctrl/Cmd+K to jump anywhere.
-- **Yours.** One `chatcraft-server` binary, an append-only journal on disk, no database to run, no
-  telemetry. Or no server at all: the demo workspace runs entirely in-process.
+- **Private and open.** Speaks [Matrix](https://matrix.org): use any homeserver, talk to people
+  on other servers and other Matrix apps. Private channels and direct messages are **end-to-end
+  encrypted** — the server only ever stores ciphertext ([docs/matrix.md](docs/matrix.md)).
+- **Yours.** No telemetry. Self-host a Matrix homeserver, or use the demo workspace entirely
+  in-process.
 - **Fast and native.** One Rust codebase, GPU-rendered with [egui](https://github.com/emilk/egui).
   No Electron.
 - **Built for agents.** Every action is a command with an id. The same commands drive the UI,
@@ -69,7 +72,10 @@ command today ([docs/parity-checklist.md](docs/parity-checklist.md)).
 # The desktop app with the built-in demo workspace (nothing leaves your machine)
 cargo run --release -p chatcraft
 
-# Host a workspace, then join it from two terminals
+# Sign in to any Matrix homeserver (end-to-end encrypted private channels and DMs)
+cargo run --release -p chatcraft -- --matrix https://matrix.example.org --user alice
+
+# Or host the small built-in ChatCraft server and join it from two terminals
 cargo run --release -p chatcraft-server -- --data ./chatcraft-data --name "My Team"
 cargo run --release -p chatcraft -- --server ws://127.0.0.1:7900 --handle ada --token <TOKEN>
 cargo run --release -p chatcraft -- --server ws://127.0.0.1:7900 --handle bo  --token <TOKEN> --dark

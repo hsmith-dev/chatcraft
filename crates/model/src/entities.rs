@@ -135,6 +135,9 @@ pub struct Channel {
     pub members: BTreeSet<UserId>,
     #[serde(default)]
     pub archived: bool,
+    /// Messages are end-to-end encrypted (Matrix Megolm); the server can't read them.
+    #[serde(default)]
+    pub encrypted: bool,
     pub created_by: UserId,
     pub created: Ts,
 }
@@ -174,6 +177,12 @@ pub struct Message {
     pub last_reply: Option<Ts>,
     #[serde(default)]
     pub repliers: BTreeSet<UserId>,
+    /// Arrived end-to-end encrypted and was decrypted on this device.
+    #[serde(default)]
+    pub encrypted: bool,
+    /// Arrived encrypted and this device has no key for it (yet).
+    #[serde(default)]
+    pub undecryptable: bool,
 }
 
 impl Message {
