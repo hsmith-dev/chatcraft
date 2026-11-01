@@ -69,6 +69,12 @@ pub(crate) enum Dialog {
     },
     Browse {
         query: String,
+        /// The homeserver's public room directory (Matrix): results, the request in flight, the
+        /// query last asked, and whether this account has a directory at all.
+        directory: Option<Vec<Value>>,
+        waiting: Option<u64>,
+        asked: Option<String>,
+        unavailable: bool,
     },
     People {
         query: String,
@@ -185,7 +191,9 @@ impl ChatApp {
             "ui.newChannel" => {
                 self.st.dialog = Some(Dialog::CreateChannel { name: String::new(), purpose: String::new(), private: false, error: None })
             }
-            "ui.browseChannels" => self.st.dialog = Some(Dialog::Browse { query: String::new() }),
+            "ui.browseChannels" => {
+                self.st.dialog = Some(Dialog::Browse { query: String::new(), directory: None, waiting: None, asked: None, unavailable: false });
+            }
             "ui.newMessage" => self.st.dialog = Some(Dialog::NewMessage { query: String::new(), picked: Vec::new() }),
             "ui.people" => self.st.dialog = Some(Dialog::People { query: String::new() }),
             "ui.setStatus" => {

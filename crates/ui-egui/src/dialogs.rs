@@ -233,14 +233,40 @@ pub(crate) fn show(app: &mut ChatApp, ctx: &egui::Context, acts: &mut Vec<Act>) 
                     }
                 });
             }
-            Dialog::Browse { query } => {
+            Dialog::Browse { query, directory, waiting, asked, unavailable } => {
                 ui.set_width(560.0);
                 heading(ui, app, "Browse channels");
                 let r = ui.add(egui::TextEdit::singleline(query).hint_text("Search by name or description").desired_width(f32::INFINITY));
                 r.request_focus();
+                // The homeserver's directory: asked when the dialog opens and on Enter.
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                if !*unavailable && waiting.is_none() && (asked.is_none() || (enter && asked.as_deref() != Some(query.as_str()))) {
+                    *asked = Some(query.clone());
+                    match app.session.run("channel.directory", &json!({ "query": query })) {
+                        Ok(v) => match v.get("pending").and_then(serde_json::Value::as_u64) {
+                            Some(req) => *waiting = Some(req),
+                            None => *directory = v.get("rooms").and_then(serde_json::Value::as_array).cloned(),
+                        },
+                        // The demo workspace has no directory.
+                        Err(_) => *unavailable = true,
+                    }
+                }
+                if let Some(req) = *waiting {
+                    match app.session.take_result(req) {
+                        Some(Ok(v)) => {
+                            *waiting = None;
+                            *directory = v.get("rooms").and_then(serde_json::Value::as_array).cloned();
+                        }
+                        Some(Err(_)) => {
+                            *waiting = None;
+                            *unavailable = true;
+                        }
+                        None => ui.ctx().request_repaint_after(std::time::Duration::from_millis(150)),
+                    }
+                }
                 let list = app.session.run("channel.browse", &json!({ "query": query })).unwrap_or_default();
                 ui.add_space(6.0);
-                egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("browse-local").max_height(220.0).show(ui, |ui| {
                     for c in list.as_array().into_iter().flatten() {
                         let id = c["id"].as_u64().map(ChannelId).unwrap_or_default();
                         let joined = c["joined"].as_bool().unwrap_or(false);
@@ -276,6 +302,47 @@ pub(crate) fn show(app: &mut ChatApp, ctx: &egui::Context, acts: &mut Vec<Act>) 
                         ui.separator();
                     }
                 });
+                if !*unavailable {
+                    ui.scope(|ui| {
+                        let server = app.session.state.workspace.name.clone();
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(format!("Public rooms on {server}")).strong().color(t.strong));
+                        ui.label(RichText::new("Press Enter to search the directory.").small().color(t.muted));
+                        if waiting.is_some() {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(RichText::new("Searching…").color(t.muted));
+                            });
+                        }
+                        for room in directory.iter().flatten().take(8) {
+                            let name = room["name"].as_str().unwrap_or_default();
+                            let address = room["alias"].as_str().unwrap_or_default();
+                            let joined = room["joined"].as_bool().unwrap_or(false);
+                            Frame::new().inner_margin(Margin::symmetric(4, 6)).show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new(name).strong().color(t.strong));
+                                        let members = room["members"].as_u64().unwrap_or(0);
+                                        let topic = room["topic"].as_str().unwrap_or_default();
+                                        ui.label(RichText::new(format!("{members} members · {address} {topic}")).small().color(t.muted));
+                                    });
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if joined {
+                                            ui.label(RichText::new("Joined").small().color(t.muted));
+                                        } else if primary(ui, app, "Join", true) {
+                                            acts.push(Act::Run("channel.join", json!({ "channel": room["room"] })));
+                                            close = true;
+                                        }
+                                    });
+                                });
+                            });
+                            ui.separator();
+                        }
+                        if directory.as_ref().is_some_and(Vec::is_empty) {
+                            ui.label(RichText::new("No public rooms match.").color(t.muted));
+                        }
+                    });
+                }
             }
             Dialog::People { query } => {
                 ui.set_width(560.0);

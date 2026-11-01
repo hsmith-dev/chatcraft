@@ -11,10 +11,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::builder().server_name_or_homeserver_url(&hs).sqlite_store(dir.join("store"), Some(pass.trim())).build().await?;
     let session: MatrixSession = serde_json::from_str(&std::fs::read_to_string(dir.join("session.json"))?)?;
     client.restore_session(session).await?;
-    let r = client.sync_once(matrix_sdk::config::SyncSettings::default().token(matrix_sdk::config::SyncToken::NoToken).full_state(true)).await?;
+    let r = client.sync_once(matrix_sdk::config::SyncSettings::default().timeout(std::time::Duration::from_secs(0))).await?;
     println!("response: joined {:?} invited {:?}", r.rooms.joined.keys().collect::<Vec<_>>(), r.rooms.invited.keys().collect::<Vec<_>>());
     for room in client.rooms() {
         println!("store: {} state={:?} direct={:?}", room.room_id(), room.state(), room.is_direct().await);
+        for m in room.members(matrix_sdk::RoomMemberships::JOIN).await.unwrap_or_default() {
+            println!("  member {} display_name={:?} name={:?}", m.user_id(), m.display_name(), m.name());
+        }
     }
     Ok(())
 }

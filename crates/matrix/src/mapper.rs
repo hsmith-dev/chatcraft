@@ -48,6 +48,10 @@ pub struct RoomInfo {
     pub favourite: bool,
     /// Joined members: `(mxid, display name)`.
     pub members: Vec<(String, Option<String>)>,
+    /// Pinned event ids (`m.room.pinned_events`).
+    pub pinned: Vec<String>,
+    /// Notifications muted for us (push rules).
+    pub muted: bool,
 }
 
 /// The mapper.
@@ -136,12 +140,14 @@ impl Mapper {
         if taken { mxid.trim_start_matches('@').to_lowercase() } else { local }
     }
 
-    /// Interns a user, announcing them (or their new name) to the replica.
+    /// Interns a user, announcing them (or their new name) to the replica. `None` means the name
+    /// isn't known here (a message's sender), which never overwrites a known name.
     pub fn user(&mut self, mxid: &str, display_name: Option<&str>) -> UserId {
         let id = UserId(self.users.get_or_add(mxid));
-        let name = display_name.map(str::trim).filter(|n| !n.is_empty()).unwrap_or_else(|| localpart(mxid)).to_string();
+        let given = display_name.map(str::trim).filter(|n| !n.is_empty());
+        let name = given.unwrap_or_else(|| localpart(mxid)).to_string();
         match self.state.user(id) {
-            Some(u) if u.display_name == name => {}
+            Some(u) if u.display_name == name || given.is_none() => {}
             Some(u) => {
                 let mut u = u.clone();
                 u.display_name = name;
@@ -210,8 +216,48 @@ impl Mapper {
             if starred != info.favourite {
                 self.emit(Event::ChannelStarred { user: me, channel: id, starred: info.favourite });
             }
+            self.set_muted(id, info.muted);
+        }
+        // Pins: the room's list is the truth for the messages we know.
+        let pinned: HashSet<MessageId> = info.pinned.iter().filter_map(|e| self.events.get(e)).map(MessageId).collect();
+        let changes: Vec<(MessageId, bool)> = self
+            .state
+            .messages
+            .values()
+            .filter(|m| m.channel == id && !m.deleted && m.pinned != pinned.contains(&m.id))
+            .map(|m| (m.id, !m.pinned))
+            .collect();
+        for (m, on) in changes {
+            self.set_pinned(m, on);
         }
         id
+    }
+
+    pub fn set_pinned(&mut self, message: MessageId, pinned: bool) {
+        let by = self.me.unwrap_or_default();
+        if self.state.message(message).is_some_and(|m| m.pinned != pinned) {
+            self.emit(Event::PinChanged { message, pinned, by });
+        }
+    }
+
+    pub fn set_muted(&mut self, channel: ChannelId, muted: bool) {
+        let Some(me) = self.me else { return };
+        if self.state.muted.get(&me).is_some_and(|s| s.contains(&channel)) != muted {
+            self.emit(Event::ChannelMuted { user: me, channel, muted });
+        }
+    }
+
+    /// Saved items, from the account's `dev.chatcraft.saved` list of `(room, event)` ids.
+    pub fn set_saved_list(&mut self, list: &[(String, String)]) {
+        let Some(me) = self.me else { return };
+        let want: BTreeSet<MessageId> = list.iter().filter_map(|(_, e)| self.events.get(e)).map(MessageId).collect();
+        let have = self.state.saved.get(&me).cloned().unwrap_or_default();
+        for m in want.difference(&have).copied().collect::<Vec<_>>() {
+            self.emit(Event::SavedChanged { user: me, message: m, saved: true });
+        }
+        for m in have.difference(&want).copied().collect::<Vec<_>>() {
+            self.emit(Event::SavedChanged { user: me, message: m, saved: false });
+        }
     }
 
     /// The viewer's trust in someone's identity.

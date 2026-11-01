@@ -1,6 +1,6 @@
 # Matrix and end-to-end encryption
 
-_Status: 2026-11-01 · revision 3 (keychain, sign-in, sign-out)_
+_Status: 2026-11-01 · revision 4 (pins, mute, saved, directory)_
 
 ChatCraft speaks **Matrix**, the open, federated chat standard, instead of a protocol of its own
 (the direction proposed in storytold/artcraft#2138). Any Matrix homeserver works — Synapse,
@@ -37,6 +37,11 @@ UI, the CLI and MCP are unchanged:
 | Formatting | Sent as `body` (ChatCraft markup) + `formatted_body` HTML rendered by ChatCraft's own parser (`*x*` is bold, as in Slack); received HTML (bold, italic, strike, code, links, pills, quotes, lists) converted back to markup (`crates/matrix/src/html.rs`). A ChatCraft message whose HTML re-renders from its body keeps its exact source |
 | Read state | `m.fully_read` + public read receipts |
 | Star | `m.favourite` tag |
+| Pin | `m.room.pinned_events` (shared with other clients) |
+| Mute | A room push rule (the same mechanism other clients use) |
+| Saved for later | Account data `dev.chatcraft.saved` (`{"events": [{"room", "event"}]}`), synced across your devices |
+| Browse / join | The homeserver's public room directory (signed in, filtered on the server); join by room id (`!abc`) or address (`#name:server`) |
+| Public channel address | Created with an alias `#name:server`; if the server doesn't let you list rooms in its directory, ChatCraft says so and the address still works |
 | Presence, status | `m.presence`, `status_msg` (`:emoji: text`) |
 | Invite to a channel | Invites are accepted automatically (people added to a channel are in it) |
 
@@ -91,8 +96,7 @@ servers share a localpart. People not met yet can be invited by Matrix ID (`@bob
 
 - Verifying **your own** devices (and QR-code verification); a stricter trust policy (only send
   keys to verified devices) as an option; warnings when a verified person's identity changes.
-- Room directory browsing; pins, saved items, muting, archiving over Matrix; images, tables and
-  headings in received HTML are reduced to their text.
+- Archiving over Matrix; images, tables and headings in received HTML are reduced to their text.
 - Encrypted public channels are possible in Matrix but not offered: anyone may join them, so
   encryption adds little and breaks history for newcomers.
 

@@ -140,6 +140,35 @@ fn formatted_bodies_keep_their_formatting() {
 }
 
 #[test]
+fn pins_mutes_and_saved_items_follow_the_account() {
+    let mut m = Mapper::new(ME);
+    let info = |pinned: Vec<String>, muted: bool| RoomInfo {
+        room_id: "!r:test".into(),
+        name: "general".into(),
+        members: vec![(ME.into(), None)],
+        pinned,
+        muted,
+        ..RoomInfo::default()
+    };
+    let c = m.upsert_room(&info(vec![], false));
+    m.timeline("!r:test", &msg("$1", ME, "keep this"), false, false);
+    m.timeline("!r:test", &msg("$2", ME, "and this"), false, false);
+    m.upsert_room(&info(vec!["$1".into(), "$unknown".into()], true));
+    let tl = m.state().timeline(c);
+    assert!(tl[0].pinned && !tl[1].pinned);
+    assert!(m.state().muted[&m.me().unwrap()].contains(&c));
+    m.upsert_room(&info(vec!["$2".into()], false));
+    let tl = m.state().timeline(c);
+    assert!(!tl[0].pinned && tl[1].pinned);
+    assert!(!m.state().muted[&m.me().unwrap()].contains(&c));
+    m.set_saved_list(&[("!r:test".into(), "$2".into()), ("!old:test".into(), "$gone".into())]);
+    let me = m.me().unwrap();
+    assert_eq!(m.state().saved[&me].len(), 1);
+    m.set_saved_list(&[]);
+    assert!(m.state().saved[&me].is_empty());
+}
+
+#[test]
 fn dms_handles_presence_status() {
     let mut m = Mapper::new(ME);
     let c = m.upsert_room(&RoomInfo {
@@ -149,6 +178,9 @@ fn dms_handles_presence_status() {
         ..RoomInfo::default()
     });
     assert_eq!(m.state().channel(c).unwrap().kind, ChannelKind::Direct);
+    assert_eq!(m.state().title(c, m.me()), "Bob B");
+    // A message from Bob (sender without a name) doesn't reset his name.
+    m.timeline("!d:test", &msg("$n", "@bob:test", "hi"), true, false);
     assert_eq!(m.state().title(c, m.me()), "Bob B");
     // Same localpart on another server gets a qualified handle.
     let other = m.user("@bob:elsewhere.org", None);

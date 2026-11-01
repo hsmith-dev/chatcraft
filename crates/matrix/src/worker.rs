@@ -120,8 +120,13 @@ async fn room_info(room: &Room) -> RoomInfo {
         encrypted: room.encryption_state().is_encrypted(),
         favourite: room.is_favourite(),
         members,
+        pinned: room.pinned_event_ids().unwrap_or_default().iter().map(ToString::to_string).collect(),
+        muted: false,
     }
 }
+
+/// The account data type ChatCraft keeps saved items in.
+const SAVED: &str = "dev.chatcraft.saved";
 
 fn sync_settings() -> SyncSettings {
     let mut timeline = RoomEventFilter::default();
@@ -147,6 +152,8 @@ struct Worker {
     outbox: Vec<ServerFrame>,
     /// The person signed out: stop, and forget this device.
     signed_out: bool,
+    /// Saved items as stored in account data: the truth, including items outside loaded history.
+    saved: Vec<(String, String)>,
 }
 
 /// How many recent events of each conversation the welcome snapshot carries.
@@ -155,41 +162,59 @@ const HISTORY: u32 = 100;
 impl Worker {
     /// The first sync and the welcome snapshot.
     async fn start(&mut self, fresh: bool) -> R<()> {
-        // From scratch (not from a saved token) so the snapshot carries recent history; later
-        // syncs continue from this one's token.
-        let first = sync_settings().timeout(Duration::from_secs(0)).token(matrix_sdk::config::SyncToken::NoToken).full_state(true);
-        let r = self.client.sync_once(first).await.map_err(err)?;
-        // Homeservers may answer a repeated initial sync from a cache (Synapse does, for a couple
-        // of minutes), so catch up with one immediate incremental sync before the snapshot.
-        let catch_up = self.client.sync_once(sync_settings().timeout(Duration::from_secs(0))).await.ok();
+        // Continue from this device's stored sync token (a fresh device has none and gets a
+        // full sync). The snapshot below reads rooms from the store and fetches history itself,
+        // so it doesn't depend on what this sync returns. (Starting from scratch on every launch
+        // made identical requests that homeservers answer from a cache — Synapse does for a couple
+        // of minutes — and served stale account data such as push rules.)
+        let r = self.client.sync_once(sync_settings().timeout(Duration::from_secs(0))).await.map_err(err)?;
         // Accept waiting invitations first, so they are in the snapshot.
         self.accept_invites(&r).await;
-        if let Some(c) = &catch_up {
-            self.accept_invites(c).await;
-        }
         self.snapshot().await;
         self.absorb_rooms(&r).await;
-        if let Some(c) = &catch_up {
-            self.absorb_rooms(c).await;
-        }
         // A new device of an account without cross-signing sets it up, so people can verify it.
         if fresh && let Err(e) = crate::verify::bootstrap_cross_signing(&self.client, &self.cfg.user, &self.cfg.password).await {
             self.problems.push(format!("couldn't set up cross-signing: {e}"));
         }
         self.refresh_trust().await;
+        self.load_saved().await;
         Ok(())
     }
 
     async fn info(&self, room: &Room) -> RoomInfo {
         let mut info = room_info(room).await;
         info.direct |= self.direct.contains(&info.room_id);
+        info.muted = matches!(
+            self.client.notification_settings().await.get_user_defined_room_notification_mode(room.room_id()).await,
+            Some(matrix_sdk::notification_settings::RoomNotificationMode::Mute)
+        );
         info
+    }
+
+    /// The saved list from account data (`[{"room", "event"}]`).
+    async fn load_saved(&mut self) {
+        let Ok(Some(raw)) = self.client.account().account_data_raw(SAVED.into()).await else { return };
+        let Ok(v) = serde_json::from_str::<Value>(raw.json().get()) else { return };
+        self.saved = v
+            .get("events")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter().filter_map(|x| Some((x.get("room")?.as_str()?.to_string(), x.get("event")?.as_str()?.to_string()))).take(1000).collect()
+            })
+            .unwrap_or_default();
+        self.map.set_saved_list(&self.saved);
     }
 
     /// The welcome snapshot: every joined room from the SDK's store, with its recent history
     /// fetched (and decrypted) explicitly, so it doesn't depend on what the first sync returned.
     async fn snapshot(&mut self) {
         for room in self.client.joined_rooms() {
+            // Refresh each member list once per launch: names and memberships the store holds
+            // may be stale (the incremental first sync doesn't carry full room state).
+            room.mark_members_missing();
+            if let Err(e) = room.sync_members().await {
+                log::warn!("members of {}: {e}", room.room_id());
+            }
             let info = self.info(&room).await;
             self.map.upsert_room(&info);
             let mut opts = matrix_sdk::room::MessagesOptions::backward();
@@ -371,6 +396,13 @@ impl Worker {
         for rid in r.rooms.left.keys() {
             self.map.left_room(rid.as_str());
         }
+        let saved_changed = r
+            .account_data
+            .iter()
+            .any(|e| serde_json::from_str::<Value>(e.json().get()).is_ok_and(|v| v.get("type").and_then(Value::as_str) == Some(SAVED)));
+        if saved_changed {
+            self.load_saved().await;
+        }
         for p in &r.presence {
             let Ok(json) = serde_json::from_str::<Value>(p.json().get()) else { continue };
             let (Some(who), Some(c)) = (json.get("sender").and_then(Value::as_str), json.get("content")) else { continue };
@@ -458,7 +490,35 @@ impl Worker {
         if encrypted {
             req.initial_state = vec![InitialStateEvent::with_empty_state_key(RoomEncryptionEventContent::with_recommended_defaults()).to_raw_any()];
         }
-        let room = self.client.create_room(req).await.map_err(err)?;
+        // Public channels get an address (`#name:server`) so they can be shared and joined even
+        // where the server doesn't list them in its directory.
+        if !private && !direct {
+            req.room_alias_name = name.as_deref().and_then(|n| chatcraft_core::normalize_channel_name(n).ok());
+        }
+        let alias = req.room_alias_name.clone();
+        let room = match self.client.create_room(req.clone()).await {
+            Ok(r) => r,
+            // The address is taken: create the channel without one.
+            Err(e) if req.room_alias_name.is_some() && e.to_string().contains("M_ROOM_IN_USE") => {
+                req.room_alias_name = None;
+                self.client.create_room(req).await.map_err(err)?
+            }
+            Err(e) => return Err(err(e)),
+        };
+        if !private && !direct {
+            let listed = self
+                .client
+                .send(matrix_sdk::ruma::api::client::directory::get_room_visibility::v3::Request::new(room.room_id().to_owned()))
+                .await
+                .map(|r| r.visibility == Visibility::Public)
+                .unwrap_or(false);
+            if !listed {
+                let server = self.me.server_name().to_string();
+                let address = room.canonical_alias().map(|a| a.to_string()).or_else(|| alias.as_ref().map(|a| format!("#{a}:{server}")));
+                let address = address.map(|a| format!(" People can join with its address, {a}.")).unwrap_or_default();
+                self.problems.push(format!("Your homeserver doesn't let you list rooms in its directory, so the channel isn't listed.{address}"));
+            }
+        }
         if direct {
             self.direct.insert(room.room_id().to_string());
             // Matrix keeps DMs in each person's `m.direct` list; record it for us.
@@ -475,8 +535,8 @@ impl Worker {
             public: !encrypted,
             direct,
             encrypted,
-            favourite: false,
             members,
+            ..RoomInfo::default()
         };
         Ok(self.map.upsert_room(&info))
     }
@@ -653,10 +713,84 @@ impl Worker {
                 self.signed_out = true;
                 Ok(json!({ "signedOut": true }))
             }
+            Op::Pin { message, pinned } => {
+                let eid = self.event_id(message)?;
+                let room = self.room(self.map.state().message(message).map(|m| m.channel).unwrap_or_default())?;
+                if pinned {
+                    room.pin_event(&eid).await.map_err(err)?;
+                } else {
+                    room.unpin_event(&eid).await.map_err(err)?;
+                }
+                self.map.set_pinned(message, pinned);
+                Ok(Value::Null)
+            }
+            Op::Mute { channel, muted } => {
+                let room = self.room(channel)?;
+                let settings = self.client.notification_settings().await;
+                if muted {
+                    settings
+                        .set_room_notification_mode(room.room_id(), matrix_sdk::notification_settings::RoomNotificationMode::Mute)
+                        .await
+                        .map_err(err)?;
+                } else {
+                    settings.delete_user_defined_room_rules(room.room_id()).await.map_err(err)?;
+                }
+                self.map.set_muted(channel, muted);
+                Ok(Value::Null)
+            }
+            Op::Save { message, saved } => {
+                let eid = self.event_id(message)?.to_string();
+                let rid = self.map.room_id(self.map.state().message(message).map(|m| m.channel).unwrap_or_default()).unwrap_or_default().to_string();
+                let mut list = self.saved.clone();
+                list.retain(|(_, e)| *e != eid);
+                if saved {
+                    list.push((rid, eid));
+                }
+                let content = json!({ "events": list.iter().map(|(r, e)| json!({ "room": r, "event": e })).collect::<Vec<_>>() });
+                let raw = matrix_sdk::ruma::serde::Raw::from_json_string(content.to_string()).map_err(err)?;
+                self.client.account().set_account_data_raw(SAVED.into(), raw).await.map_err(err)?;
+                self.saved = list;
+                self.map.set_saved_list(&self.saved);
+                Ok(Value::Null)
+            }
+            Op::Directory { query } => {
+                // Signed in and filtered on the server (many homeservers list rooms only to members).
+                let mut req = matrix_sdk::ruma::api::client::directory::get_public_rooms_filtered::v3::Request::new();
+                req.limit = Some(UInt::from(100u32));
+                let mut filter = matrix_sdk::ruma::directory::Filter::new();
+                filter.generic_search_term = Some(query.trim().trim_start_matches('#').to_string()).filter(|q| !q.is_empty());
+                req.filter = filter;
+                let res = self.client.send(req).await.map_err(err)?;
+                let q = query.trim().trim_start_matches('#').to_lowercase();
+                let rooms: Vec<Value> = res
+                    .chunk
+                    .iter()
+                    .filter(|r| {
+                        q.is_empty()
+                            || r.name.as_deref().is_some_and(|n| n.to_lowercase().contains(&q))
+                            || r.topic.as_deref().is_some_and(|t| t.to_lowercase().contains(&q))
+                            || r.canonical_alias.as_ref().is_some_and(|a| a.as_str().to_lowercase().contains(&q))
+                    })
+                    .map(|r| {
+                        json!({
+                            "room": r.room_id.to_string(),
+                            "alias": r.canonical_alias.as_ref().map(ToString::to_string),
+                            "name": r.name.clone().unwrap_or_else(|| r.room_id.to_string()),
+                            "topic": r.topic.clone().unwrap_or_default(),
+                            "members": u64::from(r.num_joined_members),
+                            "joined": self.map.known_channel(r.room_id.as_str()).is_some_and(|c| self.map.state().is_member(self.map.me().unwrap_or_default(), c)),
+                        })
+                    })
+                    .collect();
+                Ok(json!({ "rooms": rooms }))
+            }
+            Op::JoinExternal { room } => {
+                let id = matrix_sdk::ruma::RoomOrAliasId::parse(room.trim()).map_err(|e| format!("`{room}` isn't a room id or alias: {e}"))?;
+                let joined = self.client.join_room_by_id_or_alias(&id, &[]).await.map_err(err)?;
+                let info = self.info(&joined).await;
+                Ok(json!({ "channel": self.map.upsert_room(&info) }))
+            }
             Op::Archive { .. } => Err("archiving isn't available on Matrix yet".into()),
-            Op::Pin { .. } => Err("pinning isn't available on Matrix yet".into()),
-            Op::Save { .. } => Err("saved items aren't available on Matrix yet".into()),
-            Op::Mute { .. } => Err("muting isn't available on Matrix yet".into()),
             Op::RenameWorkspace { .. } => Err("a Matrix homeserver has no workspace name to change".into()),
         }
     }
@@ -721,6 +855,7 @@ pub(crate) async fn run(
         verify: Verifications::new(vtx),
         outbox: Vec::new(),
         signed_out: false,
+        saved: Vec::new(),
     };
 
     if let Err(e) = w.start(fresh).await {
@@ -772,6 +907,7 @@ pub(crate) async fn run(
                         let r = w.op(op).await;
                         let mut frames: Vec<ServerFrame> = w.map.take().into_iter().map(ServerFrame::Event).collect();
                         frames.append(&mut w.outbox);
+                        frames.extend(w.problems.drain(..).map(|message| ServerFrame::Error { message }));
                         frames.push(match r {
                             Ok(result) => ServerFrame::Ack { req, ok: true, result, error: None },
                             Err(e) => ServerFrame::Ack { req, ok: false, result: Value::Null, error: Some(e) },
