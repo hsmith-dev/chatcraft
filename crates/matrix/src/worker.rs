@@ -240,6 +240,15 @@ impl Worker {
                     for ev in page.chunk.iter().rev() {
                         self.timeline_event(room.room_id().as_str(), ev);
                     }
+                    // Everyone's stored read receipt, now that the messages they point at are known.
+                    let members: Vec<OwnedUserId> =
+                        room.members(RoomMemberships::JOIN).await.map(|ms| ms.iter().map(|m| m.user_id().to_owned()).collect()).unwrap_or_default();
+                    for u in members.iter().filter(|u| **u != self.me).take(200) {
+                        use matrix_sdk::ruma::events::receipt::{ReceiptThread, ReceiptType};
+                        if let Ok(Some((event_id, _))) = room.load_user_receipt(ReceiptType::Read, &ReceiptThread::Unthreaded, u).await {
+                            self.map.set_receipt(room.room_id().as_str(), event_id.as_str(), u.as_str());
+                        }
+                    }
                     // Where the next older page starts (none: this is the room's beginning).
                     let more = if page.chunk.is_empty() { None } else { page.end.clone() };
                     self.older.insert(room.room_id().to_string(), more);
@@ -406,6 +415,16 @@ impl Worker {
             }
             for ev in &up.ephemeral {
                 let Ok(json) = serde_json::from_str::<Value>(ev.json().get()) else { continue };
+                if json.get("type").and_then(Value::as_str) == Some("m.receipt")
+                    && let Some(content) = json.get("content").and_then(Value::as_object)
+                {
+                    // {event_id: {"m.read": {user_id: {ts}}}}
+                    for (event_id, kinds) in content.iter().take(200) {
+                        for user in kinds.get("m.read").and_then(Value::as_object).into_iter().flat_map(|m| m.keys()).take(200) {
+                            self.map.set_receipt(rid.as_str(), event_id, user);
+                        }
+                    }
+                }
                 if json.get("type").and_then(Value::as_str) == Some("m.typing") {
                     let ids: Vec<String> = json
                         .get("content")

@@ -7,7 +7,7 @@ clients; a durable WebSocket server; the command registry; measured parity.
 
 | Number | Value |
 |---|---|
-| Slack/Teams parity (catalogued features with a command) | **65 / 113 (57%)** |
+| Slack/Teams parity (catalogued features with a command) | **66 / 113 (58%)** |
 | Engine commands | 65 (+ 9 UI commands) |
 | Tests | 65, including hostile-input sweeps over every command and op, and a real-socket end-to-end test |
 | Platforms | macOS, Windows, Linux, BSD (native), web (wasm, demo workspace) |
@@ -33,6 +33,7 @@ end-to-end encryption instead of its own protocol. See [docs/matrix.md](docs/mat
 
 ## Progress log
 
+- **2026-11-01** — Read receipts: "Seen by" where each person stopped reading (Matrix public receipts). Parity 66/113.
 - **2026-11-01** — Archiving over Matrix: archived channels are read-only for every client (power levels), restorable exactly.
 - **2026-11-01** — Older history loads on demand (scroll to the top); timelines, threads and read cursors now order by send time, so pages can arrive in any order.
 - **2026-11-01** — Typing indicators (Matrix `m.typing`; transient, never journaled). Parity 65/113.

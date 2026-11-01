@@ -29,6 +29,9 @@ pub struct State {
     /// Who is typing where (transient).
     #[serde(skip)]
     pub typing: BTreeMap<ChannelId, BTreeSet<UserId>>,
+    /// Public read receipts: per conversation, how far each person has read.
+    #[serde(default)]
+    pub receipts: BTreeMap<ChannelId, BTreeMap<UserId, MessageId>>,
     /// Channel → timeline message ids (roots and broadcast replies), ascending.
     #[serde(skip)]
     timeline: BTreeMap<ChannelId, Vec<MessageId>>,
@@ -212,6 +215,12 @@ impl State {
                     self.post(&m);
                 }
             }
+            Event::Receipt { channel, user, upto } => {
+                let current = self.receipts.get(channel).and_then(|r| r.get(user)).copied().unwrap_or_default();
+                if self.is_after(*upto, current) {
+                    self.receipts.entry(*channel).or_default().insert(*user, *upto);
+                }
+            }
             Event::Typing { channel, users } => {
                 if users.is_empty() {
                     self.typing.remove(channel);
@@ -248,6 +257,25 @@ impl State {
         if m.in_timeline() {
             insert_ordered(&self.messages, self.timeline.entry(m.channel).or_default(), m.id);
         }
+    }
+
+    /// People (other than its author) whose read receipt is exactly at this message: "seen by",
+    /// shown where each reader stopped.
+    pub fn seen_at(&self, message: MessageId) -> Vec<UserId> {
+        let Some(m) = self.messages.get(&message) else { return Vec::new() };
+        self.receipts
+            .get(&m.channel)
+            .map(|r| r.iter().filter(|(u, at)| **at == message && **u != m.author).map(|(u, _)| *u).collect())
+            .unwrap_or_default()
+    }
+
+    /// People (other than its author) who have read at least up to this message.
+    pub fn read_by(&self, message: MessageId) -> Vec<UserId> {
+        let Some(m) = self.messages.get(&message) else { return Vec::new() };
+        self.receipts
+            .get(&m.channel)
+            .map(|r| r.iter().filter(|(u, at)| **u != m.author && !self.is_after(message, **at)).map(|(u, _)| *u).collect())
+            .unwrap_or_default()
     }
 
     /// Where a message sits in time (see [`order_of`]).

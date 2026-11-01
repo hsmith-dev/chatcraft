@@ -182,6 +182,25 @@ fn typing_comes_and_goes() {
 }
 
 #[test]
+fn read_receipts_move_forward_and_show_where_people_stopped() {
+    let mut m = Mapper::new(ME);
+    let c = room(&mut m, "!r:test", "general", &[ME, "@bob:test", "@cy:test"], false);
+    m.timeline("!r:test", &msg("$1", ME, "one"), false, false);
+    m.timeline("!r:test", &msg("$2", ME, "two"), false, false);
+    m.set_receipt("!r:test", "$2", "@bob:test");
+    m.set_receipt("!r:test", "$1", "@cy:test");
+    m.set_receipt("!r:test", "$1", "@bob:test"); // older: ignored
+    m.set_receipt("!r:test", "$2", ME); // ours: not a receipt
+    let tl: Vec<MessageId> = m.state().timeline(c).iter().map(|x| x.id).collect();
+    let name = |u: &UserId| m.state().user(*u).unwrap().handle.clone();
+    assert_eq!(m.state().seen_at(tl[1]).iter().map(name).collect::<Vec<_>>(), vec!["bob"]);
+    assert_eq!(m.state().seen_at(tl[0]).iter().map(name).collect::<Vec<_>>(), vec!["cy"]);
+    let mut first: Vec<String> = m.state().read_by(tl[0]).iter().map(name).collect();
+    first.sort();
+    assert_eq!(first, vec!["bob", "cy"], "reading message two means message one was read too");
+}
+
+#[test]
 fn dms_handles_presence_status() {
     let mut m = Mapper::new(ME);
     let c = m.upsert_room(&RoomInfo {
