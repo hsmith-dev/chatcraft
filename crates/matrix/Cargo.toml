@@ -18,6 +18,7 @@ matrix-sdk = { version = "0.19.1", default-features = false, features = ["e2e-en
 tokio = { workspace = true }
 serde_json = { workspace = true }
 getrandom = { workspace = true }
+futures-util = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]

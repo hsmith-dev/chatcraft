@@ -16,10 +16,13 @@ fn main() {
     let (mut w, mut h) = (1440.0, 900.0);
     let mut cmds = Vec::new();
     let (mut matrix, mut user, mut password, mut dark) = (None, String::new(), String::new(), false);
+    // `--verify-emoji`: show the verification dialog at the emoji step (sample emoji).
+    let mut verify_demo = false;
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--dark" => dark = true,
+            "--verify-emoji" => verify_demo = true,
             "--matrix" => matrix = it.next().cloned(),
             "--user" => user = it.next().cloned().unwrap_or_default(),
             "--password" => password = it.next().cloned().unwrap_or_default(),
@@ -59,6 +62,15 @@ fn main() {
     let mut app = ChatApp::new(session);
     app.session.focused = true;
     app.set_dark(dark);
+    if verify_demo && let Some(u) = app.session.state.user_by_handle("ada").map(|u| u.id) {
+        let emoji = [("🔧", "Spanner"), ("☂️", "Umbrella"), ("🔑", "Key"), ("🦄", "Unicorn"), ("🐘", "Elephant"), ("⚽", "Ball"), ("🌵", "Cactus")];
+        app.session.verifications.push(chatcraft_engine::proto::VerificationUpdate {
+            flow: "demo".into(),
+            user: u,
+            incoming: false,
+            stage: chatcraft_engine::proto::VerifyStage::Emoji { emoji: emoji.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect() },
+        });
+    }
     let mut harness = egui_kittest::Harness::builder()
         .with_size(egui::vec2(w, h))
         .with_pixels_per_point(2.0)

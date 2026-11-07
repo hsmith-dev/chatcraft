@@ -136,6 +136,73 @@ pub enum Op {
     RenameWorkspace {
         name: String,
     },
+    /// Starts verifying someone's identity by emoji comparison (Matrix only).
+    VerifyUser {
+        user: UserId,
+    },
+    /// Answers a verification in progress.
+    Verification {
+        flow: String,
+        action: VerifyAction,
+    },
+    /// Turns on encrypted key backup and returns a new recovery key (Matrix only).
+    SetUpRecovery,
+    /// Restores this device's keys from the backup with a recovery key (Matrix only).
+    Recover {
+        key: String,
+    },
+}
+
+/// What the person does in a verification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VerifyAction {
+    /// Accept an incoming request.
+    Accept,
+    /// The emoji match.
+    Confirm,
+    /// The emoji don't match (someone may be intercepting).
+    Mismatch,
+    Cancel,
+}
+
+/// Where a verification stands.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "stage", rename_all = "camelCase")]
+pub enum VerifyStage {
+    /// The other person asked; waiting for us to accept.
+    Requested,
+    /// Waiting for the other person.
+    Waiting,
+    /// Compare these with the other person's screen: `(symbol, name)`, seven of them.
+    Emoji {
+        emoji: Vec<(String, String)>,
+    },
+    /// We confirmed; waiting for them to confirm.
+    Confirmed,
+    Done,
+    Cancelled {
+        reason: String,
+    },
+}
+
+impl VerifyStage {
+    pub fn finished(&self) -> bool {
+        matches!(self, VerifyStage::Done | VerifyStage::Cancelled { .. })
+    }
+}
+
+/// A verification's latest state, pushed by the transport.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerificationUpdate {
+    /// The flow id (stable for the whole verification).
+    pub flow: String,
+    /// The person being verified.
+    pub user: UserId,
+    /// They asked us (rather than we them).
+    pub incoming: bool,
+    #[serde(flatten)]
+    pub stage: VerifyStage,
 }
 
 /// Client → server.
@@ -188,6 +255,8 @@ pub enum ServerFrame {
     Pong {
         n: u64,
     },
+    /// A device-verification update (Matrix only; not part of the workspace state).
+    Verification(VerificationUpdate),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

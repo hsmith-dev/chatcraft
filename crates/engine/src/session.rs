@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use chatcraft_core::{ChannelId, MessageId, UserId};
 use chatcraft_model::{ChannelKind, ChannelSummary, Event, State};
-use chatcraft_proto::{ClientFrame, Op, ServerFrame};
+use chatcraft_proto::{ClientFrame, Op, ServerFrame, VerificationUpdate};
 use chatcraft_search::Hit;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -101,6 +101,8 @@ pub struct Session {
     pub focused: bool,
     /// A fatal sign-in error from the hub.
     pub error: Option<String>,
+    /// Identity verifications, by flow id, in the order they started (Matrix only).
+    pub verifications: Vec<VerificationUpdate>,
     link: Box<dyn Transport>,
     next_req: u64,
     awaited: BTreeSet<u64>,
@@ -127,6 +129,7 @@ impl Session {
             alerts: VecDeque::new(),
             focused: false,
             error: None,
+            verifications: Vec::new(),
             link,
             next_req: 1,
             awaited: BTreeSet::new(),
@@ -217,6 +220,11 @@ impl Session {
             None => {}
         }
         Ok(r)
+    }
+
+    /// A pending request's answer, if it has arrived (non-blocking; for the UI).
+    pub fn take_result(&mut self, req: u64) -> Option<CmdResult> {
+        self.take_ack(req)
     }
 
     fn take_ack(&mut self, req: u64) -> Option<CmdResult> {
@@ -313,6 +321,7 @@ impl Session {
                     self.notice(message, true);
                 }
                 ServerFrame::Pong { .. } => {}
+                ServerFrame::Verification(v) => self.verification_update(v),
             }
         }
         if touched_open && self.focused {
@@ -367,6 +376,27 @@ impl Session {
         while self.alerts.len() > MAX_ALERTS {
             self.alerts.pop_front();
         }
+    }
+
+    fn verification_update(&mut self, v: VerificationUpdate) {
+        let who = self.state.user(v.user).map(|u| u.name().to_string()).unwrap_or_else(|| "Someone".into());
+        match &v.stage {
+            chatcraft_proto::VerifyStage::Done => self.notice(format!("{who} is verified"), false),
+            chatcraft_proto::VerifyStage::Cancelled { reason } => self.notice(format!("Verification with {who} stopped: {reason}"), true),
+            _ => {}
+        }
+        match self.verifications.iter_mut().find(|x| x.flow == v.flow) {
+            Some(x) => *x = v,
+            None => self.verifications.push(v),
+        }
+        if self.verifications.len() > 20 {
+            self.verifications.remove(0);
+        }
+    }
+
+    /// The verification the person should be looking at: the newest unfinished one.
+    pub fn active_verification(&self) -> Option<&VerificationUpdate> {
+        self.verifications.iter().rev().find(|v| !v.stage.finished())
     }
 
     pub fn notice(&mut self, text: impl Into<String>, error: bool) {

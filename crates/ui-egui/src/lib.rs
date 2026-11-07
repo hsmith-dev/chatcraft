@@ -14,6 +14,7 @@ pub mod icons;
 mod keys;
 mod markup;
 mod pane;
+mod sas;
 mod sidebar;
 pub mod theme;
 mod timeline;
@@ -36,6 +37,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.toggleTheme", "Switch light / dark", "Mod+Shift+L"),
     ("ui.shortcuts", "Keyboard shortcuts", "Mod+/"),
     ("ui.focusSearch", "Search", "Mod+F"),
+    ("ui.recovery", "Encryption and key backup", "Mod+Shift+R"),
 ];
 
 /// What the emoji picker inserts into.
@@ -48,14 +50,53 @@ pub(crate) enum PickFor {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Dialog {
-    QuickSwitcher { query: String, selected: usize },
-    CreateChannel { name: String, purpose: String, private: bool, error: Option<String> },
-    NewMessage { query: String, picked: Vec<UserId> },
-    Browse { query: String },
-    People { query: String },
-    Status { text: String, emoji: String, minutes: Option<u32> },
-    Topic { channel: ChannelId, text: String },
+    QuickSwitcher {
+        query: String,
+        selected: usize,
+    },
+    CreateChannel {
+        name: String,
+        purpose: String,
+        private: bool,
+        error: Option<String>,
+    },
+    NewMessage {
+        query: String,
+        picked: Vec<UserId>,
+    },
+    Browse {
+        query: String,
+    },
+    People {
+        query: String,
+    },
+    Status {
+        text: String,
+        emoji: String,
+        minutes: Option<u32>,
+    },
+    Topic {
+        channel: ChannelId,
+        text: String,
+    },
     Shortcuts,
+    /// An identity verification (by flow id).
+    Verify {
+        flow: String,
+    },
+    /// Key backup: set up (shows the new recovery key) or restore with one.
+    Recovery {
+        key: Option<String>,
+        input: String,
+        waiting: Option<(u64, RecoveryStep)>,
+        message: Option<(String, bool)>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecoveryStep {
+    SetUp,
+    Restore,
 }
 
 /// Things panels ask for while drawing; applied once the frame is drawn.
@@ -106,6 +147,8 @@ pub(crate) struct UiState {
     /// Last frame's hover action bar, so the row under it stays hovered while the pointer is on it.
     pub hover_bar: Option<(MessageId, egui::Rect)>,
     pub next_hover_bar: Option<(MessageId, egui::Rect)>,
+    /// The last verification flow the dialog was opened for.
+    pub verify_shown: Option<String>,
 }
 
 /// The ChatCraft window.
@@ -145,6 +188,7 @@ impl ChatApp {
             "ui.toggleTheme" => self.set_dark(self.tokens.mode == Mode::Light),
             "ui.shortcuts" => self.st.dialog = Some(Dialog::Shortcuts),
             "ui.focusSearch" => self.st.focus_search = true,
+            "ui.recovery" => self.st.dialog = Some(Dialog::Recovery { key: None, input: String::new(), waiting: None, message: None }),
             "ui.closeDialog" => self.st.dialog = None,
             _ if id.starts_with("ui.") => return Err(format!("unknown UI command `{id}`")),
             _ => {
@@ -172,6 +216,14 @@ impl ChatApp {
         self.session.focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         self.session.pump();
         self.collect_toasts(&ctx);
+        // A new verification (theirs or ours) opens its dialog.
+        if let Some(v) = self.session.verifications.last()
+            && !v.stage.finished()
+            && self.st.verify_shown.as_deref() != Some(v.flow.as_str())
+        {
+            self.st.verify_shown = Some(v.flow.clone());
+            self.st.dialog = Some(Dialog::Verify { flow: v.flow.clone() });
+        }
         let mut acts: Vec<Act> = Vec::new();
         self.st.hover_bar = self.st.next_hover_bar.take();
         keys::handle(self, &ctx, &mut acts);

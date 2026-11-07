@@ -315,6 +315,9 @@ pub(crate) fn plan(hub: &mut Hub, actor: UserId, op: Op, now: Ts) -> Result<Plan
             member(&hub.state, id, actor)?;
             ok(vec![Event::ChannelStarred { user: actor, channel: id, starred }])
         }
+        Op::VerifyUser { .. } | Op::Verification { .. } | Op::SetUpRecovery | Op::Recover { .. } => {
+            Err(HubError::Invalid("verification and key recovery need a Matrix account (end-to-end encryption)".into()))
+        }
         Op::RenameWorkspace { name } => {
             if !is_admin(&hub.state, actor) {
                 return Err(HubError::Forbidden("only admins can rename the workspace".into()));

@@ -214,6 +214,14 @@ impl Mapper {
         id
     }
 
+    /// The viewer's trust in someone's identity.
+    pub fn set_verified(&mut self, mxid: &str, verified: bool) {
+        let Some(u) = self.users.get(mxid).map(UserId) else { return };
+        if self.state.user(u).is_some_and(|x| x.verified != verified) {
+            self.emit(Event::UserVerified { user: u, verified });
+        }
+    }
+
     pub fn starred(&mut self, c: ChannelId, on: bool) {
         if let Some(me) = self.me {
             self.emit(Event::ChannelStarred { user: me, channel: c, starred: on });
@@ -260,7 +268,9 @@ impl Mapper {
     #[allow(clippy::cognitive_complexity)]
     pub fn timeline(&mut self, room_id: &str, ev: &Value, encrypted: bool, utd: bool) {
         let (Some(event_id), Some(sender)) = (str_at(ev, &["event_id"]), str_at(ev, &["sender"])) else { return };
-        if !self.seen.insert(event_id.to_string()) {
+        // An event shown as undecryptable may come back decrypted (late key, key backup).
+        let placeholder = self.events.get(event_id).map(MessageId).filter(|m| self.state.message(*m).is_some_and(|x| x.undecryptable));
+        if !self.seen.insert(event_id.to_string()) && (placeholder.is_none() || utd) {
             return;
         }
         let Some(channel) = self.known_channel(room_id) else { return };
@@ -292,6 +302,8 @@ impl Mapper {
                     });
                 }
             }
+            // Verification requests travel as room messages; they're not chat.
+            ("m.room.message", _) if str_at(&content, &["msgtype"]).is_some_and(|t| t.starts_with("m.key.verification")) => {}
             ("m.room.message", _) => {
                 let Some(text) = str_at(&content, &["body"]) else { return };
                 let thread = match rel_type {
@@ -302,7 +314,12 @@ impl Mapper {
                 let id = self.message_for(event_id);
                 let message =
                     Message { id, channel, author, ts, text: text.to_string(), thread, mentions, mentions_all, encrypted, ..Message::default() };
-                self.emit(Event::MessagePosted { message });
+                if placeholder.is_some() {
+                    self.emit(Event::MessageReplaced { message });
+                } else {
+                    self.emit(Event::MessagePosted { message });
+                }
+                return;
             }
             ("m.reaction", Some("m.annotation")) => {
                 let (Some(target), Some(key)) = (rel_target, rel.and_then(|r| str_at(r, &["key"]))) else { return };
@@ -324,6 +341,10 @@ impl Mapper {
                 }
             }
             _ => {}
+        }
+        // A placeholder that turned out to be a reaction, edit or redaction isn't a message.
+        if let Some(p) = placeholder {
+            self.emit(Event::MessageDeleted { message: p, at: ts });
         }
     }
 

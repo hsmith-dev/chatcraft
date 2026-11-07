@@ -6,7 +6,10 @@ use chatcraft_engine::text::emoji;
 use egui::{FontId, Frame, Id, Key, Margin, RichText, Sense, Stroke, Ui, vec2};
 use serde_json::json;
 
-use crate::{Act, ChatApp, Dialog, UI_COMMANDS, avatar};
+use chatcraft_engine::proto::VerifyStage;
+
+use crate::icons::{self, Icon};
+use crate::{Act, ChatApp, Dialog, RecoveryStep, UI_COMMANDS, avatar, sas};
 
 /// A switcher entry.
 #[derive(Clone)]
@@ -86,7 +89,7 @@ pub(crate) fn show(app: &mut ChatApp, ctx: &egui::Context, acts: &mut Vec<Act>) 
     let t = app.tokens.clone();
     let mut close = false;
     let resp =
-        egui::Modal::new(Id::unique("dialog")).backdrop_color(t.shadow.linear_multiply(2.5)).frame(frame(app)).show(ctx, |ui| match &mut dialog {
+        egui::Modal::new(Id::unique("dialog")).backdrop_color(egui::Color32::from_black_alpha(110)).frame(frame(app)).show(ctx, |ui| match &mut dialog {
             Dialog::QuickSwitcher { query, selected } => {
                 ui.set_width(520.0);
                 heading(ui, app, "Jump to…");
@@ -375,6 +378,193 @@ pub(crate) fn show(app: &mut ChatApp, ctx: &egui::Context, acts: &mut Vec<Act>) 
                         close = true;
                     }
                 });
+            }
+            Dialog::Verify { flow } => {
+                ui.set_width(520.0);
+                let Some(v) = app.session.verifications.iter().find(|v| v.flow == *flow).cloned() else {
+                    close = true;
+                    return;
+                };
+                let who = app.session.state.user(v.user).map(|u| u.name().to_string()).unwrap_or_else(|| "this person".into());
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
+                    icons::paint(ui.painter(), r, Icon::Shield, t.accent);
+                    ui.label(RichText::new(format!("Verify {who}")).font(FontId::proportional(20.0)).strong().color(t.strong));
+                });
+                ui.add_space(8.0);
+                let action = |name: &'static str| Act::Run(name, json!({ "flow": v.flow }));
+                match &v.stage {
+                    VerifyStage::Requested => {
+                        ui.label(
+                            RichText::new(format!(
+                                "{who} wants to verify that you are really you, so you can both trust that no one is reading your encrypted messages."
+                            ))
+                            .color(t.text),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("You'll compare seven emoji with them — in person, or on a call you trust.").color(t.muted));
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            if primary(ui, app, "Start verifying", true) {
+                                acts.push(action("security.accept"));
+                            }
+                            if ui.button("Not now").clicked() {
+                                acts.push(action("security.cancel"));
+                                close = true;
+                            }
+                        });
+                    }
+                    VerifyStage::Waiting => {
+                        let text =
+                            if v.incoming { "Connecting…".to_string() } else { format!("Waiting for {who} to accept on one of their devices…") };
+                        ui.label(RichText::new(text).color(t.text));
+                        ui.add_space(12.0);
+                        if ui.button("Cancel").clicked() {
+                            acts.push(action("security.cancel"));
+                            close = true;
+                        }
+                    }
+                    VerifyStage::Emoji { emoji } => {
+                        ui.label(RichText::new(format!("Check that {who} sees the same emoji, in the same order:")).color(t.text));
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            for (symbol, name) in emoji {
+                                Frame::new().fill(t.row_hover).corner_radius(10).inner_margin(Margin::symmetric(4, 8)).show(ui, |ui| {
+                                    ui.set_width(58.0);
+                                    ui.vertical_centered(|ui| {
+                                        let glyph = if sas::drawable(symbol) { symbol.as_str() } else { " " };
+                                        ui.label(RichText::new(glyph).font(FontId::proportional(30.0)));
+                                        ui.label(RichText::new(name).small().strong().color(t.strong));
+                                    });
+                                });
+                            }
+                        });
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            if primary(ui, app, "They match", true) {
+                                acts.push(action("security.confirm"));
+                            }
+                            let b = egui::Button::new(RichText::new("They don't match").color(t.danger)).corner_radius(6).min_size(vec2(96.0, 32.0));
+                            if ui.add(b).clicked() {
+                                acts.push(action("security.mismatch"));
+                            }
+                        });
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new("If they don't match, someone may be intercepting your connection. Don't confirm.").small().color(t.muted),
+                        );
+                    }
+                    VerifyStage::Confirmed => {
+                        ui.label(RichText::new(format!("Waiting for {who} to confirm the emoji…")).color(t.text));
+                    }
+                    VerifyStage::Done => {
+                        ui.label(RichText::new(format!("{who} is verified.")).strong().color(t.accent));
+                        ui.label(
+                            RichText::new("Your encrypted messages with them can't be read by anyone else, including the server.").color(t.text),
+                        );
+                        ui.add_space(12.0);
+                        if primary(ui, app, "Done", true) {
+                            close = true;
+                        }
+                    }
+                    VerifyStage::Cancelled { reason } => {
+                        ui.label(RichText::new(format!("Verification stopped: {reason}")).color(t.danger));
+                        ui.add_space(12.0);
+                        if ui.button("Close").clicked() {
+                            close = true;
+                        }
+                    }
+                }
+            }
+            Dialog::Recovery { key, input, waiting, message } => {
+                ui.set_width(520.0);
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
+                    icons::paint(ui.painter(), r, Icon::Shield, t.accent);
+                    ui.label(RichText::new("Encryption and key backup").font(FontId::proportional(20.0)).strong().color(t.strong));
+                });
+                ui.add_space(8.0);
+                // An answer that has arrived.
+                if let Some((req, step)) = *waiting
+                    && let Some(r) = app.session.take_result(req)
+                {
+                    *waiting = None;
+                    match (step, r) {
+                        (RecoveryStep::SetUp, Ok(v)) => *key = v.get("recoveryKey").and_then(serde_json::Value::as_str).map(str::to_string),
+                        (RecoveryStep::Restore, Ok(v)) => {
+                            let left = v.get("stillUndecryptable").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                            let text = if left == 0 {
+                                "Restored. Your encrypted history is readable on this device.".to_string()
+                            } else {
+                                format!("Restored. {left} older messages still have no key in the backup.")
+                            };
+                            *message = Some((text, false));
+                            input.clear();
+                        }
+                        (_, Err(e)) => *message = Some((e.to_string(), true)),
+                    }
+                }
+                let submit = |app: &mut ChatApp, id: &str, params: serde_json::Value| -> Result<Option<u64>, String> {
+                    let r = app.session.run(id, &params).map_err(|e| e.to_string())?;
+                    Ok(r.get("pending").and_then(serde_json::Value::as_u64))
+                };
+                if let Some(k) = key.clone() {
+                    ui.label(RichText::new("Your recovery key").strong().color(t.strong));
+                    ui.label(RichText::new("Write it down or keep it in a password manager. With it, any new device can read your encrypted history. ChatCraft can't show it again, and no one, not even the server, can recover it for you.").color(t.text));
+                    ui.add_space(8.0);
+                    Frame::new().fill(t.code_bg).stroke(Stroke::new(1.0, t.border)).corner_radius(8).inner_margin(Margin::same(12)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new(&k).monospace().size(15.0).color(t.strong));
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Copy").clicked() {
+                            acts.push(Act::Copy(k.clone()));
+                        }
+                        if primary(ui, app, "I've saved it", true) {
+                            close = true;
+                        }
+                    });
+                } else {
+                    let busy = waiting.is_some();
+                    let step = waiting.map(|w| w.1);
+                    ui.label(RichText::new("Back up your message keys").strong().color(t.strong));
+                    ui.label(RichText::new("Keys are backed up to the server, encrypted with a recovery key that only you hold, so a new device can read your history.").color(t.text));
+                    ui.add_space(6.0);
+                    if primary(ui, app, if step == Some(RecoveryStep::SetUp) { "Setting up…" } else { "Set up key backup" }, !busy) {
+                        match submit(app, "security.setupRecovery", json!({})) {
+                            Ok(Some(req)) => *waiting = Some((req, RecoveryStep::SetUp)),
+                            Ok(None) => {}
+                            Err(e) => *message = Some((e, true)),
+                        }
+                    }
+                    ui.add_space(14.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Restore on this device").strong().color(t.strong));
+                    ui.label(RichText::new("Enter the recovery key you saved when you set up backup.").color(t.muted));
+                    ui.add(egui::TextEdit::singleline(input).hint_text("recovery key").font(egui::TextStyle::Monospace).desired_width(f32::INFINITY));
+                    ui.add_space(6.0);
+                    if primary(ui, app, if step == Some(RecoveryStep::Restore) { "Restoring…" } else { "Restore" }, !busy && !input.trim().is_empty()) {
+                        match submit(app, "security.recover", json!({ "key": input.trim() })) {
+                            Ok(Some(req)) => *waiting = Some((req, RecoveryStep::Restore)),
+                            Ok(None) => {}
+                            Err(e) => *message = Some((e, true)),
+                        }
+                    }
+                    if let Some((text, error)) = message {
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(text.as_str()).color(if *error { t.danger } else { t.accent }));
+                    }
+                    ui.add_space(8.0);
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                    if busy {
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+                    }
+                }
             }
             Dialog::Shortcuts => {
                 ui.set_width(560.0);
