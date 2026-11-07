@@ -34,11 +34,36 @@ pub(crate) fn show(app: &mut ChatApp, ui: &mut Ui, acts: &mut Vec<Act>) {
                     let purpose = if ch.purpose.is_empty() { String::new() } else { format!("\n{}", ch.purpose) };
                     banner(ui, &t, &format!("You're viewing #{}{purpose}", ch.name), Some(("Join channel", "channel.join")), acts);
                 }
-                Some(_) => composer(app, ui, Target::Channel(c), acts),
+                Some(_) => {
+                    typing_line(app, ui, c);
+                    composer(app, ui, Target::Channel(c), acts);
+                }
                 None => {}
             }
         });
     egui::CentralPanel::no_frame().show(ui, |ui| messages(app, ui, c, acts));
+}
+
+/// "Ada is typing…" (always reserves its line, so the composer doesn't jump).
+fn typing_line(app: &ChatApp, ui: &mut Ui, c: chatcraft_engine::model::ChannelId) {
+    let s = &app.session;
+    let names: Vec<String> = s
+        .state
+        .typing
+        .get(&c)
+        .into_iter()
+        .flatten()
+        .filter(|u| Some(**u) != s.me)
+        .filter_map(|u| s.state.user(*u))
+        .map(|u| u.name().to_string())
+        .collect();
+    let text = match names.as_slice() {
+        [] => String::new(),
+        [a] => format!("{a} is typing…"),
+        [a, b] => format!("{a} and {b} are typing…"),
+        _ => "Several people are typing…".to_string(),
+    };
+    ui.label(RichText::new(if text.is_empty() { " ".to_string() } else { text }).small().italics().color(app.tokens.muted));
 }
 
 fn header(app: &mut ChatApp, ui: &mut Ui, c: chatcraft_engine::model::ChannelId, acts: &mut Vec<Act>) {

@@ -37,6 +37,7 @@ UI, the CLI and MCP are unchanged:
 | Formatting | Sent as `body` (ChatCraft markup) + `formatted_body` HTML rendered by ChatCraft's own parser (`*x*` is bold, as in Slack); received HTML (bold, italic, strike, code, links, pills, quotes, lists) converted back to markup (`crates/matrix/src/html.rs`). A ChatCraft message whose HTML re-renders from its body keeps its exact source |
 | Read state | `m.fully_read` + public read receipts |
 | Star | `m.favourite` tag |
+| Typing | `m.typing` notices (sent at most every 4 s while composing, cleared on send); shown above the composer |
 | Pin | `m.room.pinned_events` (shared with other clients) |
 | Mute | A room push rule (the same mechanism other clients use) |
 | Saved for later | Account data `dev.chatcraft.saved` (`{"events": [{"room", "event"}]}`), synced across your devices |

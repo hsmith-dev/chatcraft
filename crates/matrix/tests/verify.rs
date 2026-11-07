@@ -339,3 +339,32 @@ fn your_own_devices_verify_each_other_and_can_be_signed_out_remotely() {
     assert_eq!(String::from_utf8_lossy(&code.stdout), "401", "the phone's session is revoked");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn typing_shows_up_and_ends_when_the_message_is_sent() {
+    let (Some(hs), Some(_)) = (env("CHATCRAFT_TEST_HOMESERVER"), env("CHATCRAFT_TEST_REGISTER")) else {
+        eprintln!("skipped: set CHATCRAFT_TEST_HOMESERVER and CHATCRAFT_TEST_REGISTER=1");
+        return;
+    };
+    let server = env("CHATCRAFT_TEST_SERVER_NAME").unwrap_or_else(|| "localhost".into());
+    let tag = format!("{}{}", std::process::id(), Instant::now().elapsed().as_nanos() % 1000);
+    let (a_name, b_name) = (format!("tia{tag}"), format!("ugo{tag}"));
+    register(&hs, &a_name, "pw-tia-123");
+    register(&hs, &b_name, "pw-ugo-123");
+    let dir = std::env::temp_dir().join(format!("chatcraft-typing-{tag}"));
+    let mut tia = session(&hs, &a_name, "pw-tia-123", &dir.join("tia"));
+    let mut ugo = session(&hs, &b_name, "pw-ugo-123", &dir.join("ugo"));
+    run(&mut tia, "dm.open", json!({ "users": [format!("@{b_name}:{server}")] }));
+    until(&mut tia, &mut ugo, "Ugo joins the DM", |_, u| u.state.channels.values().any(|c| c.kind.is_dm()));
+    until(&mut tia, &mut ugo, "Tia sees Ugo in the DM", |t, _| t.view.channel.and_then(|c| t.state.channel(c)).is_some_and(|c| c.members.len() == 2));
+
+    run(&mut tia, "composer.typing", json!({ "typing": true }));
+    until(&mut tia, &mut ugo, "Ugo sees Tia typing", |_, u| {
+        u.state.typing.values().any(|who| who.iter().any(|x| u.state.user(*x).is_some_and(|p| p.handle == a_name)))
+    });
+    run(&mut tia, "message.send", json!({ "text": "there you go" }));
+    until(&mut tia, &mut ugo, "typing ends with the message", |_, u| {
+        u.state.messages.values().any(|m| m.text == "there you go") && u.state.typing.values().all(|w| w.is_empty())
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -156,6 +156,6 @@ fn ids_are_unique_and_shortcuts_unambiguous() {
 #[test]
 fn parity_floor() {
     let (done, total) = catalog::counts();
-    assert!(done >= 64, "parity fell to {done}/{total}");
+    assert!(done >= 65, "parity fell to {done}/{total}");
     assert!(catalog::markdown().contains("| ✅ | Send a message |"));
 }

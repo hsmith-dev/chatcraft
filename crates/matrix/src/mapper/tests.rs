@@ -169,6 +169,19 @@ fn pins_mutes_and_saved_items_follow_the_account() {
 }
 
 #[test]
+fn typing_comes_and_goes() {
+    let mut m = Mapper::new(ME);
+    let c = room(&mut m, "!r:test", "general", &[ME, "@bob:test"], false);
+    m.set_typing("!r:test", &["@bob:test".into(), ME.into()]);
+    let bob = m.state().user_by_handle("bob").unwrap().id;
+    assert_eq!(m.state().typing[&c].iter().copied().collect::<Vec<_>>(), vec![bob], "we never see ourselves typing");
+    m.timeline("!r:test", &msg("$t", "@bob:test", "done typing"), false, false);
+    assert!(m.state().typing[&c].is_empty(), "posting ends typing");
+    m.set_typing("!r:test", &[]);
+    assert!(m.state().typing.get(&c).is_none_or(std::collections::BTreeSet::is_empty), "nobody is typing");
+}
+
+#[test]
 fn dms_handles_presence_status() {
     let mut m = Mapper::new(ME);
     let c = m.upsert_room(&RoomInfo {

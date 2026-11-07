@@ -162,6 +162,12 @@ pub enum Op {
     JoinExternal {
         room: String,
     },
+    /// The sender is (or stopped) typing in a conversation. Best effort; produces no events in
+    /// the in-process hub.
+    Typing {
+        channel: ChannelId,
+        typing: bool,
+    },
     /// Lists the account's signed-in devices (Matrix only).
     Devices,
     /// Starts verifying another of your own devices by emoji comparison (Matrix only).

@@ -168,6 +168,8 @@ pub(crate) struct UiState {
     pub next_hover_bar: Option<(MessageId, egui::Rect)>,
     /// The last verification flow the dialog was opened for.
     pub verify_shown: Option<String>,
+    /// When we last told the conversation we're typing: `(channel, input time)`.
+    pub typing_sent: Option<(ChannelId, f64)>,
     /// Sign-out was asked for; set once it's done (the shell returns to sign-in).
     pub signing_out: bool,
     pub signed_out: bool,
@@ -382,6 +384,18 @@ impl ChatApp {
                 Act::CloseDialog => self.st.dialog = None,
                 Act::Draft(c, text) => {
                     let _ = self.session.run("composer.setDraft", &json!({ "channel": c.to_string(), "text": text }));
+                    // Tell the others we're typing, at most every 4 seconds (and that we stopped
+                    // when the draft is cleared).
+                    let now = ctx.input(|i| i.time);
+                    let recent = self.st.typing_sent.is_some_and(|(ch, at)| ch == c && now - at < 4.0);
+                    if text.trim().is_empty() {
+                        if self.st.typing_sent.take().is_some() {
+                            let _ = self.session.run("composer.typing", &json!({ "channel": c.to_string(), "typing": false }));
+                        }
+                    } else if !recent {
+                        self.st.typing_sent = Some((c, now));
+                        let _ = self.session.run("composer.typing", &json!({ "channel": c.to_string(), "typing": true }));
+                    }
                 }
                 Act::ThreadDraft(m, text) => {
                     if text.is_empty() {
@@ -394,6 +408,9 @@ impl ChatApp {
                     let text = self.session.drafts.get(&c).cloned().unwrap_or_default();
                     if !text.trim().is_empty() {
                         let _ = self.run("message.send", &json!({ "channel": c.to_string(), "text": text }));
+                    }
+                    if self.st.typing_sent.take().is_some() {
+                        let _ = self.session.run("composer.typing", &json!({ "channel": c.to_string(), "typing": false }));
                     }
                 }
                 Act::Reply(root) => {
