@@ -69,11 +69,11 @@ command today ([docs/parity-checklist.md](docs/parity-checklist.md)).
 ## Quick start
 
 ```sh
-# The desktop app with the built-in demo workspace (nothing leaves your machine)
-cargo run --release -p chatcraft
-
 # Sign in to any Matrix homeserver (end-to-end encrypted private channels and DMs)
-cargo run --release -p chatcraft -- --matrix https://matrix.example.org --user alice
+cargo run --release -p chatcraft            # sign-in screen; the account is remembered
+
+# The built-in demo workspace (nothing leaves your machine)
+cargo run --release -p chatcraft -- --demo
 
 # Or host the small built-in ChatCraft server and join it from two terminals
 cargo run --release -p chatcraft-server -- --data ./chatcraft-data --name "My Team"

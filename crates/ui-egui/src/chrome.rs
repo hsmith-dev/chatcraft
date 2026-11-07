@@ -294,6 +294,11 @@ pub(crate) fn popups(app: &mut ChatApp, ctx: &egui::Context, acts: &mut Vec<Act>
                         acts.push(Act::Profile(u.id));
                         close = true;
                     }
+                    ui.separator();
+                    if menu_item(ui, &t, "Sign out", "", true) {
+                        acts.push(Act::Ui("ui.signOut"));
+                        close = true;
+                    }
                 }
             });
         });

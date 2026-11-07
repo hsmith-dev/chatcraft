@@ -106,3 +106,69 @@ fn sas_glyphs_are_known() {
     }
     assert_eq!(missing, crate::sas::UNDRAWABLE.to_vec(), "update sas::UNDRAWABLE");
 }
+
+mod shell {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use chatcraft_engine::{Loopback, Session};
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use crate::{Credentials, Shell, Start};
+
+    fn shell(start: Start) -> Harness<'static, Shell> {
+        harness(new_shell(start))
+    }
+
+    fn new_shell(start: Start) -> Shell {
+        // "Signing in" against the in-process hub: an invalid handle fails like a bad password.
+        let connect = Box::new(|c: &Credentials| Ok(Session::connect(Box::new(Loopback::demo()), Loopback::hello(&c.user))));
+        Shell::new(start, connect)
+    }
+
+    fn harness(s: Shell) -> Harness<'static, Shell> {
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(|ui, s: &mut Shell| s.ui(ui), s);
+        h.run_steps(3);
+        h
+    }
+
+    #[test]
+    fn sign_in_screen_then_demo() {
+        let mut h = shell(Start::SignIn(Credentials::default()));
+        assert!(h.query_all_by_label_contains("Sign in with your Matrix account").next().is_some());
+        assert!(h.state_mut().app().is_none());
+        h.get_by_label("Try the demo workspace instead").click();
+        h.run_steps(4);
+        assert!(h.state_mut().app().is_some(), "the demo link opens a workspace");
+    }
+
+    #[test]
+    fn a_failed_sign_in_returns_to_the_form_with_the_error() {
+        let mut h = shell(Start::Connect(Credentials { homeserver: "hs".into(), user: "not a valid handle!".into(), password: String::new() }));
+        h.run_steps(4);
+        assert!(h.state_mut().app().is_none());
+        assert!(h.query_all_by_label_contains("handle").next().is_some(), "the error is shown");
+    }
+
+    #[test]
+    fn signing_in_remembers_and_signing_out_forgets() {
+        let remembered = Rc::new(Cell::new(false));
+        let forgotten = Rc::new(Cell::new(false));
+        let mut s = new_shell(Start::Connect(Credentials { homeserver: "hs".into(), user: "morgan".into(), password: "pw".into() }));
+        let (r, f) = (Rc::clone(&remembered), Rc::clone(&forgotten));
+        s.on_signed_in = Some(Box::new(move |c| r.set(c.password.is_empty())));
+        s.on_signed_out = Some(Box::new(move || f.set(true)));
+        let mut h = harness(s);
+        h.run_steps(4);
+        assert!(h.state_mut().app().is_some(), "signed in");
+        assert!(remembered.get(), "the account is remembered, without its password");
+        // Signing out of the in-process workspace has nothing to tell a server: it just leaves.
+        let app = h.state_mut().app().unwrap();
+        app.st.signed_out = true;
+        h.run_steps(3);
+        assert!(forgotten.get());
+        assert!(h.state_mut().app().is_none());
+        assert!(h.query_all_by_label_contains("Sign in with your Matrix account").next().is_some());
+    }
+}

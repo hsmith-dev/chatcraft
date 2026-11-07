@@ -566,6 +566,28 @@ pub(crate) fn show(app: &mut ChatApp, ctx: &egui::Context, acts: &mut Vec<Act>) 
                     }
                 }
             }
+            Dialog::SignOut => {
+                ui.set_width(460.0);
+                heading(ui, app, "Sign out?");
+                ui.label(RichText::new("This device forgets your account and its encryption keys.").color(t.text));
+                ui.add_space(6.0);
+                ui.label(RichText::new("Without key backup, you won't be able to read your encrypted history when you sign in again. Set up key backup first if you haven't (profile menu › Encryption and key backup).").color(t.muted));
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    let b = egui::Button::new(RichText::new("Sign out").strong().color(egui::Color32::WHITE)).fill(t.danger).corner_radius(6).min_size(vec2(96.0, 32.0));
+                    if ui.add(b).clicked() {
+                        match app.session.run("session.signOut", &json!({})) {
+                            Ok(_) => app.st.signing_out = true,
+                            // Nothing to sign out of (the demo workspace): just leave.
+                            Err(_) => app.st.signed_out = true,
+                        }
+                        close = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            }
             Dialog::Shortcuts => {
                 ui.set_width(560.0);
                 heading(ui, app, "Keyboard shortcuts");

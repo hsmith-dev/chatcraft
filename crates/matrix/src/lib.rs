@@ -7,13 +7,13 @@
 //!
 //! **End-to-end encryption.** Olm/Megolm through the SDK (`vodozemac`). Private channels and
 //! direct messages are created encrypted; messages are decrypted on this device only. The
-//! device's keys live in an encrypted SQLite store (`<store>/store`, passphrase in
-//! `<store>/passphrase`, mode 0600) and the signed-in session in `<store>/session.json`, so the
-//! same device — and its keys — is used on every launch. Device verification, cross-signing and
-//! key backup are tracked in `docs/gaps.md`.
+//! device's keys live in an encrypted SQLite store (`<store>/store`) whose passphrase, like the
+//! signed-in session, is kept in the OS keychain ([`SecretStore`]), so the same device — and its
+//! keys — is used on every launch.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod mapper;
+mod secrets;
 mod verify;
 mod worker;
 
@@ -25,6 +25,8 @@ use std::time::Duration;
 use chatcraft_engine::proto::{ClientFrame, ServerFrame};
 use chatcraft_engine::{LinkStatus, Transport};
 use tokio::sync::mpsc as tmpsc;
+
+pub use secrets::SecretStore;
 
 /// How to reach and sign in to a homeserver.
 #[derive(Clone, Debug)]
@@ -40,6 +42,8 @@ pub struct MatrixConfig {
     pub device_name: String,
     /// Accept room invitations automatically (people added to a channel are in it, as in Slack).
     pub auto_join_invites: bool,
+    /// Where the store passphrase and session are kept.
+    pub secrets: SecretStore,
 }
 
 impl MatrixConfig {
@@ -51,14 +55,15 @@ impl MatrixConfig {
             store_dir,
             device_name: "ChatCraft".into(),
             auto_join_invites: true,
+            secrets: SecretStore::default_for_platform(),
         }
     }
 }
 
-/// Where an account's device data lives by default: the platform's per-user data folder,
-/// `ChatCraft/matrix/<user>@<homeserver>`.
-pub fn default_store_dir(homeserver: &str, user: &str) -> PathBuf {
-    let base = if cfg!(target_os = "macos") {
+/// ChatCraft's per-user data folder (`~/Library/Application Support/ChatCraft`,
+/// `%APPDATA%\\ChatCraft`, `$XDG_DATA_HOME/chatcraft`).
+pub fn data_dir() -> PathBuf {
+    if cfg!(target_os = "macos") {
         std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support/ChatCraft"))
     } else if cfg!(windows) {
         std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("ChatCraft"))
@@ -67,7 +72,12 @@ pub fn default_store_dir(homeserver: &str, user: &str) -> PathBuf {
             .map(|d| PathBuf::from(d).join("chatcraft"))
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share/chatcraft")))
     }
-    .unwrap_or_else(|| PathBuf::from(".chatcraft"));
+    .unwrap_or_else(|| PathBuf::from(".chatcraft"))
+}
+
+/// Where an account's device data lives by default: `<data_dir>/matrix/<user>@<homeserver>`.
+pub fn default_store_dir(homeserver: &str, user: &str) -> PathBuf {
+    let base = data_dir();
     let host = homeserver.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
     let safe: String =
         format!("{}@{host}", user.trim_start_matches('@')).chars().map(|c| if c.is_alphanumeric() || "@.-_".contains(c) { c } else { '_' }).collect();

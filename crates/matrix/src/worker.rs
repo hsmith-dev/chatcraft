@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc as tmpsc;
 
 use crate::mapper::{Mapper, RoomInfo, format_status};
+use crate::secrets::Secrets;
 use crate::verify::{Change, Verifications};
 use crate::{MatrixConfig, Waker, set_status, wake};
 
@@ -36,36 +37,35 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-/// Reads a secret file, or creates it with a random value (mode 0600 on Unix).
-fn secret_file(path: &std::path::Path) -> R<String> {
-    if let Ok(s) = std::fs::read_to_string(path)
-        && !s.trim().is_empty()
-    {
-        return Ok(s.trim().to_string());
-    }
+/// A random secret (64 hex characters) from the OS CSPRNG.
+fn random_secret() -> R<String> {
     let mut b = [0u8; 32];
     // OS randomness only: this secret protects the device's encryption keys at rest.
     getrandom::fill(&mut b).map_err(|e| format!("no secure randomness available: {e}"))?;
-    let s: String = b.iter().map(|x| format!("{x:02x}")).collect();
-    write_private(path, &s)?;
-    Ok(s)
+    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
 }
 
-fn write_private(path: &std::path::Path, contents: &str) -> R<()> {
-    std::fs::write(path, contents).map_err(|e| format!("{}: {e}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| format!("{}: {e}", path.display()))?;
-    }
-    Ok(())
+/// The keychain account for a config: `user@homeserver`.
+pub(crate) fn account(cfg: &MatrixConfig) -> String {
+    format!(
+        "{}@{}",
+        cfg.user.trim_start_matches('@'),
+        cfg.homeserver.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/')
+    )
 }
 
-/// Signs in, reusing this store's saved device when there is one (so its keys stay valid).
 /// Returns the client and whether this was a fresh password sign-in (a new device).
 async fn sign_in(cfg: &MatrixConfig) -> R<(Client, bool)> {
     std::fs::create_dir_all(&cfg.store_dir).map_err(|e| format!("{}: {e}", cfg.store_dir.display()))?;
-    let pass = secret_file(&cfg.store_dir.join("passphrase"))?;
+    let mut secrets = Secrets::new(cfg.secrets, &cfg.store_dir, &account(cfg));
+    let pass = match secrets.get("passphrase") {
+        Some(p) => p,
+        None => {
+            let p = random_secret()?;
+            secrets.set("passphrase", &p)?;
+            p
+        }
+    };
     let client = Client::builder()
         .server_name_or_homeserver_url(&cfg.homeserver)
         .sqlite_store(cfg.store_dir.join("store"), Some(&pass))
@@ -79,8 +79,7 @@ async fn sign_in(cfg: &MatrixConfig) -> R<(Client, bool)> {
         .build()
         .await
         .map_err(err)?;
-    let session_path = cfg.store_dir.join("session.json");
-    if let Ok(text) = std::fs::read_to_string(&session_path)
+    if let Some(text) = secrets.get("session")
         && let Ok(session) = serde_json::from_str::<MatrixSession>(&text)
     {
         match client.restore_session(session).await {
@@ -93,7 +92,10 @@ async fn sign_in(cfg: &MatrixConfig) -> R<(Client, bool)> {
     }
     client.matrix_auth().login_username(&cfg.user, &cfg.password).initial_device_display_name(&cfg.device_name).await.map_err(err)?;
     if let Some(session) = client.matrix_auth().session() {
-        write_private(&session_path, &serde_json::to_string(&session).map_err(err)?)?;
+        secrets.set("session", &serde_json::to_string(&session).map_err(err)?)?;
+    }
+    if let Some(why) = &secrets.fallback {
+        log::warn!("OS keychain unavailable ({why}); secrets kept in private files in {}", cfg.store_dir.display());
     }
     Ok((client, true))
 }
@@ -143,12 +145,41 @@ struct Worker {
     verify: Verifications,
     /// Frames other than events waiting to go out (verification updates).
     outbox: Vec<ServerFrame>,
+    /// The person signed out: stop, and forget this device.
+    signed_out: bool,
 }
 
 /// How many recent events of each conversation the welcome snapshot carries.
 const HISTORY: u32 = 100;
 
 impl Worker {
+    /// The first sync and the welcome snapshot.
+    async fn start(&mut self, fresh: bool) -> R<()> {
+        // From scratch (not from a saved token) so the snapshot carries recent history; later
+        // syncs continue from this one's token.
+        let first = sync_settings().timeout(Duration::from_secs(0)).token(matrix_sdk::config::SyncToken::NoToken).full_state(true);
+        let r = self.client.sync_once(first).await.map_err(err)?;
+        // Homeservers may answer a repeated initial sync from a cache (Synapse does, for a couple
+        // of minutes), so catch up with one immediate incremental sync before the snapshot.
+        let catch_up = self.client.sync_once(sync_settings().timeout(Duration::from_secs(0))).await.ok();
+        // Accept waiting invitations first, so they are in the snapshot.
+        self.accept_invites(&r).await;
+        if let Some(c) = &catch_up {
+            self.accept_invites(c).await;
+        }
+        self.snapshot().await;
+        self.absorb_rooms(&r).await;
+        if let Some(c) = &catch_up {
+            self.absorb_rooms(c).await;
+        }
+        // A new device of an account without cross-signing sets it up, so people can verify it.
+        if fresh && let Err(e) = crate::verify::bootstrap_cross_signing(&self.client, &self.cfg.user, &self.cfg.password).await {
+            self.problems.push(format!("couldn't set up cross-signing: {e}"));
+        }
+        self.refresh_trust().await;
+        Ok(())
+    }
+
     async fn info(&self, room: &Room) -> RoomInfo {
         let mut info = room_info(room).await;
         info.direct |= self.direct.contains(&info.room_id);
@@ -605,12 +636,30 @@ impl Worker {
                 let left = self.map.state().messages.values().filter(|m| m.undecryptable && !m.deleted).count();
                 Ok(json!({ "restored": true, "stillUndecryptable": left }))
             }
+            Op::SignOut => {
+                // Best effort on the server; forgetting the device locally always happens.
+                if let Err(e) = self.client.matrix_auth().logout().await {
+                    log::warn!("server sign-out: {e}");
+                }
+                self.signed_out = true;
+                Ok(json!({ "signedOut": true }))
+            }
             Op::Archive { .. } => Err("archiving isn't available on Matrix yet".into()),
             Op::Pin { .. } => Err("pinning isn't available on Matrix yet".into()),
             Op::Save { .. } => Err("saved items aren't available on Matrix yet".into()),
             Op::Mute { .. } => Err("muting isn't available on Matrix yet".into()),
             Op::RenameWorkspace { .. } => Err("a Matrix homeserver has no workspace name to change".into()),
         }
+    }
+}
+
+/// Removes everything this device kept: secrets (keychain or files) and the local key store.
+async fn forget_device(cfg: &MatrixConfig) {
+    let mut secrets = Secrets::new(cfg.secrets, &cfg.store_dir, &account(cfg));
+    secrets.delete("session");
+    secrets.delete("passphrase");
+    if let Err(e) = std::fs::remove_dir_all(&cfg.store_dir) {
+        log::warn!("removing {}: {e}", cfg.store_dir.display());
     }
 }
 
@@ -662,38 +711,13 @@ pub(crate) async fn run(
         direct: std::collections::HashSet::new(),
         verify: Verifications::new(vtx),
         outbox: Vec::new(),
+        signed_out: false,
     };
 
-    // First sync from scratch (not from a saved token) so the snapshot carries recent history,
-    // then the welcome; later syncs continue from this one's token.
-    let first = sync_settings().timeout(Duration::from_secs(0)).token(matrix_sdk::config::SyncToken::NoToken).full_state(true);
-    match client.sync_once(first).await {
-        Ok(r) => {
-            // Homeservers may answer a repeated initial sync from a cache (Synapse does, for a
-            // couple of minutes), so catch up with one immediate incremental sync before the
-            // snapshot.
-            let catch_up = client.sync_once(sync_settings().timeout(Duration::from_secs(0))).await.ok();
-            // Accept waiting invitations first, so they are in the snapshot.
-            w.accept_invites(&r).await;
-            if let Some(c) = &catch_up {
-                w.accept_invites(c).await;
-            }
-            w.snapshot().await;
-            w.absorb_rooms(&r).await;
-            if let Some(c) = &catch_up {
-                w.absorb_rooms(c).await;
-            }
-            // A new device of an account without cross-signing sets it up, so people can verify it.
-            if fresh && let Err(e) = crate::verify::bootstrap_cross_signing(&client, &w.cfg.user, &w.cfg.password).await {
-                w.problems.push(format!("couldn't set up cross-signing: {e}"));
-            }
-            w.refresh_trust().await;
-        }
-        Err(e) => {
-            set_status(&status, LinkStatus::Offline(format!("sync failed: {e}")));
-            let _ = send_frames(&in_tx, &waker, vec![ServerFrame::Error { message: format!("Matrix sync failed: {e}") }]);
-            return;
-        }
+    if let Err(e) = w.start(fresh).await {
+        set_status(&status, LinkStatus::Offline(format!("sync failed: {e}")));
+        let _ = send_frames(&in_tx, &waker, vec![ServerFrame::Error { message: format!("Matrix sync failed: {e}") }]);
+        return;
     }
     let _ = w.map.take();
     let me_id = w.map.me().unwrap_or_default();
@@ -743,6 +767,13 @@ pub(crate) async fn run(
                             Ok(result) => ServerFrame::Ack { req, ok: true, result, error: None },
                             Err(e) => ServerFrame::Ack { req, ok: false, result: Value::Null, error: Some(e) },
                         });
+                        if w.signed_out {
+                            let _ = send_frames(&in_tx, &waker, frames);
+                            forget_device(&w.cfg).await;
+                            set_status(&status, LinkStatus::Offline("signed out".into()));
+                            wake(&waker);
+                            return;
+                        }
                         frames
                     }
                     Some(ClientFrame::Ping { n }) => vec![ServerFrame::Pong { n }],

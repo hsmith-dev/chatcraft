@@ -27,6 +27,7 @@ pub(super) fn commands() -> Vec<CommandSpec> {
         })
         .params(r#"{"key": "recovery key"}"#)
         .when(signed_in),
+        CommandSpec::new("session.signOut", "Sign out", "Profile menu", |s, _| s.submit(Op::SignOut)).when(signed_in),
         CommandSpec::new("security.status", "Encryption status", "Profile › Security", status).pure(),
     ]
 }

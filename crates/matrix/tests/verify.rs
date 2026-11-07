@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use chatcraft_engine::proto::VerifyStage;
 use chatcraft_engine::{Loopback, Session};
-use chatcraft_matrix::{MatrixConfig, MatrixTransport};
+use chatcraft_matrix::{MatrixConfig, MatrixTransport, SecretStore};
 use serde_json::{Value, json};
 
 fn env(k: &str) -> Option<String> {
@@ -26,7 +26,10 @@ fn register(hs: &str, user: &str, password: &str) {
 }
 
 fn session(hs: &str, user: &str, password: &str, store: &Path) -> Session {
-    let link = MatrixTransport::connect(MatrixConfig::new(hs, user, password, store.to_path_buf())).unwrap();
+    // Tests keep secrets in files, never in the developer's keychain.
+    let mut cfg = MatrixConfig::new(hs, user, password, store.to_path_buf());
+    cfg.secrets = SecretStore::Files;
+    let link = MatrixTransport::connect(cfg).unwrap();
     let mut s = Session::connect(Box::new(link), Loopback::hello(user));
     assert!(s.wait_ready(Duration::from_secs(60)), "{user} could not sign in: {:?}", s.error);
     s
@@ -164,5 +167,48 @@ fn a_new_device_reads_history_after_restoring_from_backup() {
     assert!(wrong.is_err(), "a wrong recovery key is refused");
     run(&mut phone, "security.recover", json!({ "key": key }));
     until(&mut phone, &mut sam, "the phone reads the old message", |p, _| p.state.messages.values().any(|m| m.text == secret && !m.undecryptable));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn signing_out_forgets_the_device_everywhere() {
+    let (Some(hs), Some(_)) = (env("CHATCRAFT_TEST_HOMESERVER"), env("CHATCRAFT_TEST_REGISTER")) else {
+        eprintln!("skipped: set CHATCRAFT_TEST_HOMESERVER and CHATCRAFT_TEST_REGISTER=1");
+        return;
+    };
+    let tag = format!("{}{}", std::process::id(), Instant::now().elapsed().as_nanos() % 1000);
+    let name = format!("tess{tag}");
+    register(&hs, &name, "pw-tess-123");
+    let dir = std::env::temp_dir().join(format!("chatcraft-signout-{tag}"));
+    let store = dir.join("device");
+    let mut s = session(&hs, &name, "pw-tess-123", &store);
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(store.join("session.json")).unwrap()).unwrap();
+    let token = saved["access_token"].as_str().or_else(|| saved["tokens"]["access_token"].as_str()).unwrap().to_string();
+    let whoami = |t: &str| {
+        let out = std::process::Command::new("curl")
+            .args([
+                "-s",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "-H",
+                &format!("Authorization: Bearer {t}"),
+                &format!("{hs}/_matrix/client/v3/account/whoami"),
+            ])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(whoami(&token), "200");
+
+    run(&mut s, "session.signOut", json!({}));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while store.exists() && Instant::now() < deadline {
+        s.pump_wait(Duration::from_millis(100));
+    }
+    assert!(!store.exists(), "the device's key store and secrets are deleted");
+    assert_eq!(whoami(&token), "401", "the homeserver no longer accepts the old session");
+    assert!(matches!(s.link_status(), chatcraft_engine::LinkStatus::Offline(w) if w == "signed out"));
     let _ = std::fs::remove_dir_all(&dir);
 }
