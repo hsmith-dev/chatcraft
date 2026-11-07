@@ -7,6 +7,7 @@
 //! chatcraft-cli mcp [CONN]                     MCP server on stdio
 //!
 //! CONN: --demo [--as HANDLE]  (default: the in-process demo workspace)
+//!       --matrix https://HOMESERVER --as USER [--password PW]   (end-to-end encrypted)
 //!       --server ws://HOST:PORT --as HANDLE --token TOKEN
 //! ```
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -19,9 +20,11 @@ use chatcraft_engine::{Session, catalog};
 use serde_json::Value;
 
 const USAGE: &str = "usage: chatcraft-cli <commands | parity [--markdown] | run [CONN] --cmd 'id={json}'... | mcp [CONN]>
-CONN: --demo [--as HANDLE] | --server ws://HOST:PORT --as HANDLE --token TOKEN";
+CONN: --demo [--as HANDLE] | --matrix https://HOMESERVER --as USER [--password PW] | --server ws://HOST:PORT --as HANDLE --token TOKEN";
 
 struct Conn {
+    matrix: Option<String>,
+    password: String,
     server: Option<String>,
     handle: String,
     token: String,
@@ -29,12 +32,21 @@ struct Conn {
 }
 
 fn parse(rest: &[String]) -> Result<Conn, String> {
-    let mut c = Conn { server: None, handle: String::new(), token: std::env::var("CHATCRAFT_TOKEN").unwrap_or_default(), cmds: Vec::new() };
+    let mut c = Conn {
+        matrix: None,
+        password: std::env::var("CHATCRAFT_PASSWORD").unwrap_or_default(),
+        server: None,
+        handle: String::new(),
+        token: std::env::var("CHATCRAFT_TOKEN").unwrap_or_default(),
+        cmds: Vec::new(),
+    };
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().cloned().ok_or_else(|| format!("{a} needs a value"));
         match a.as_str() {
             "--demo" => c.server = None,
+            "--matrix" => c.matrix = Some(val()?),
+            "--password" => c.password = val()?,
             "--server" => c.server = Some(val()?),
             "--as" => c.handle = val()?,
             "--token" => c.token = val()?,
@@ -46,6 +58,18 @@ fn parse(rest: &[String]) -> Result<Conn, String> {
 }
 
 fn session(c: &Conn) -> Result<Session, String> {
+    if let Some(hs) = &c.matrix {
+        if c.handle.is_empty() {
+            return Err("--matrix needs --as USER".into());
+        }
+        let store = chatcraft_matrix::default_store_dir(hs, &c.handle);
+        let link = chatcraft_matrix::MatrixTransport::connect(chatcraft_matrix::MatrixConfig::new(hs, &c.handle, &c.password, store))?;
+        let mut s = Session::connect(Box::new(link), chatcraft_engine::Loopback::hello(&c.handle));
+        if !s.wait_ready(Duration::from_secs(60)) {
+            return Err(s.error.clone().unwrap_or_else(|| format!("could not sign in to {hs}")));
+        }
+        return Ok(s);
+    }
     match &c.server {
         None => Ok(if c.handle.is_empty() { Session::demo() } else { Session::demo_as(&c.handle) }),
         Some(url) => {
@@ -85,6 +109,9 @@ fn run_cmds(c: &Conn) -> Result<(), String> {
                 println!("{}", serde_json::json!({ "command": id, "ok": false, "error": e.to_string() }));
             }
         }
+    }
+    for n in s.notices.drain(..).filter(|n| n.error) {
+        eprintln!("notice: {}", n.text);
     }
     if failed { Err("a command failed".into()) } else { Ok(()) }
 }

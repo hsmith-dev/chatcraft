@@ -45,7 +45,14 @@ fn private_channels_hide_and_invites_resync() {
     let r = h
         .apply(
             a,
-            Op::CreateChannel { name: "Secret Plans".into(), private: true, topic: String::new(), purpose: String::new(), members: vec![b] },
+            Op::CreateChannel {
+                name: "Secret Plans".into(),
+                private: true,
+                topic: String::new(),
+                purpose: String::new(),
+                members: vec![b],
+                external: vec![],
+            },
             t(5),
         )
         .unwrap();
@@ -57,7 +64,7 @@ fn private_channels_hide_and_invites_resync() {
         h.apply(c, Op::PostMessage { channel: ch, text: "x".into(), thread: None, broadcast: false }, t(6)),
         Err(HubError::NotFound(_))
     ));
-    let out = h.apply(a, Op::Invite { channel: ch, users: vec![c] }, t(7)).unwrap();
+    let out = h.apply(a, Op::Invite { channel: ch, users: vec![c], external: vec![] }, t(7)).unwrap();
     assert_eq!(out.resync, vec![c]);
     assert!(h.state().can_see(c, ch));
 }
@@ -94,11 +101,11 @@ fn threads_reactions_and_idempotence() {
 #[test]
 fn dms_are_found_again() {
     let (mut h, a, b, c, _) = setup();
-    let one = h.apply(a, Op::OpenDm { users: vec![b] }, t(5)).unwrap();
-    let again = h.apply(b, Op::OpenDm { users: vec![a] }, t(6)).unwrap();
+    let one = h.apply(a, Op::OpenDm { users: vec![b], external: vec![] }, t(5)).unwrap();
+    let again = h.apply(b, Op::OpenDm { users: vec![a], external: vec![] }, t(6)).unwrap();
     assert_eq!(one.result, again.result);
     assert!(again.events.is_empty());
-    let grp = h.apply(a, Op::OpenDm { users: vec![b, c] }, t(7)).unwrap();
+    let grp = h.apply(a, Op::OpenDm { users: vec![b, c], external: vec![] }, t(7)).unwrap();
     let id = ChannelId(grp.result["channel"].as_u64().unwrap());
     assert_eq!(h.state().channel(id).unwrap().kind, ChannelKind::Group);
     assert!(h.apply(a, Op::LeaveChannel { channel: id }, t(8)).is_err());
@@ -110,8 +117,19 @@ fn default_channel_rules() {
     assert!(matches!(h.apply(b, Op::LeaveChannel { channel: general }, t(5)), Err(HubError::Forbidden(_))));
     assert!(h.apply(b, Op::Archive { channel: general, archived: true }, t(5)).is_err());
     assert!(
-        h.apply(b, Op::CreateChannel { name: "general".into(), private: false, topic: String::new(), purpose: String::new(), members: vec![] }, t(5))
-            .is_err()
+        h.apply(
+            b,
+            Op::CreateChannel {
+                name: "general".into(),
+                private: false,
+                topic: String::new(),
+                purpose: String::new(),
+                members: vec![],
+                external: vec![]
+            },
+            t(5)
+        )
+        .is_err()
     );
 }
 
@@ -154,14 +172,21 @@ fn hostile_ops_never_panic() {
         Op::PostMessage { channel: ChannelId(1), text: "   ".into(), thread: None, broadcast: false },
         Op::EditMessage { message: MessageId(0), text: String::new() },
         Op::React { message: MessageId(1), emoji: big.clone(), on: true },
-        Op::CreateChannel { name: big.clone(), private: true, topic: big.clone(), purpose: String::new(), members: vec![UserId(999)] },
-        Op::CreateChannel { name: "#".into(), private: false, topic: String::new(), purpose: String::new(), members: vec![] },
-        Op::OpenDm { users: (0..100).map(UserId).collect() },
+        Op::CreateChannel {
+            name: big.clone(),
+            private: true,
+            topic: big.clone(),
+            purpose: String::new(),
+            members: vec![UserId(999)],
+            external: vec![],
+        },
+        Op::CreateChannel { name: "#".into(), private: false, topic: String::new(), purpose: String::new(), members: vec![], external: vec![] },
+        Op::OpenDm { users: (0..100).map(UserId).collect(), external: vec![] },
         Op::SetStatus { text: big.clone(), emoji: "!!".into(), minutes: Some(u32::MAX) },
         Op::SetProfile { display_name: Some(String::new()), title: Some(big.clone()) },
         Op::MarkRead { channel: ChannelId(1), upto: MessageId(u64::MAX) },
         Op::RenameChannel { channel: ChannelId(1), name: "general".into() },
-        Op::Invite { channel: ChannelId(1), users: vec![UserId(0)] },
+        Op::Invite { channel: ChannelId(1), users: vec![UserId(0)], external: vec![] },
         Op::Remove { channel: ChannelId(1), user: UserId(u64::MAX) },
         Op::RenameWorkspace { name: big },
     ];

@@ -4,6 +4,8 @@
 //!  [--cmd 'thread.open={"message":12}'] ...`
 //!
 //! Commands run in order before the shot (engine ids or `ui.*` ids), so any state can be shown.
+//! `--matrix https://homeserver --user NAME [--password PW]` shows a real Matrix account instead
+//! of the demo workspace.
 
 use chatcraft_engine::Session;
 use chatcraft_ui_egui::ChatApp;
@@ -11,14 +13,16 @@ use chatcraft_ui_egui::ChatApp;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let out = args.first().cloned().unwrap_or_else(|| "chatcraft.png".into());
-    let mut app = ChatApp::new(Session::demo());
-    app.session.focused = true;
     let (mut w, mut h) = (1440.0, 900.0);
     let mut cmds = Vec::new();
+    let (mut matrix, mut user, mut password, mut dark) = (None, String::new(), String::new(), false);
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--dark" => app.set_dark(true),
+            "--dark" => dark = true,
+            "--matrix" => matrix = it.next().cloned(),
+            "--user" => user = it.next().cloned().unwrap_or_default(),
+            "--password" => password = it.next().cloned().unwrap_or_default(),
             "--size" => {
                 if let Some((a, b)) = it.next().and_then(|s| s.split_once('x')) {
                     w = a.parse().unwrap_or(w);
@@ -33,6 +37,28 @@ fn main() {
             other => eprintln!("ignored argument {other}"),
         }
     }
+    let session = match &matrix {
+        Some(hs) => {
+            let cfg = chatcraft_matrix::MatrixConfig::new(hs, &user, &password, chatcraft_matrix::default_store_dir(hs, &user));
+            let link = match chatcraft_matrix::MatrixTransport::connect(cfg) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("matrix: {e}");
+                    return;
+                }
+            };
+            let mut s = Session::connect(Box::new(link), chatcraft_engine::Loopback::hello(&user));
+            if !s.wait_ready(std::time::Duration::from_secs(60)) {
+                eprintln!("could not sign in: {:?}", s.error);
+                return;
+            }
+            s
+        }
+        None => Session::demo(),
+    };
+    let mut app = ChatApp::new(session);
+    app.session.focused = true;
+    app.set_dark(dark);
     let mut harness = egui_kittest::Harness::builder()
         .with_size(egui::vec2(w, h))
         .with_pixels_per_point(2.0)

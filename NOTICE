@@ -18,5 +18,9 @@ Fonts embedded through the egui dependency (epaint_default_fonts), all redistrib
 - egui-icons.ttf — MIT / Apache-2.0 (the egui authors)
 Licence texts ship with the epaint_default_fonts crate.
 
+matrix-rust-sdk, vodozemac and ruma (Matrix client, Olm/Megolm encryption, Matrix types) are
+used under the Apache License 2.0 (The Matrix.org Foundation C.I.C. and contributors; ruma
+contributors under MIT). SQLite is bundled through matrix-sdk-sqlite (public domain).
+
 Rust dependencies are listed in Cargo.lock under their own licences (MIT, Apache-2.0, BSD,
 Zlib, Unicode-3.0 and similar permissive licences).
