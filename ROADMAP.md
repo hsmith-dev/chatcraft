@@ -33,6 +33,7 @@ end-to-end encryption instead of its own protocol. See [docs/matrix.md](docs/mat
 
 ## Progress log
 
+- **2026-11-01** — Matrix coverage: pins, mutes and saved items live on the server (and in other clients where Matrix defines them); public room directory with join by id or address; public channels get an address. Fixed: names reset by message senders, stale state served by Synapse's sync cache on quick restarts, room v12 ids.
 - **2026-11-01** — Matrix rich text: received HTML (pills, bold, links, lists, quotes, code) becomes ChatCraft markup; sent messages carry HTML from ChatCraft's own parser so other clients see the intended formatting.
 - **2026-11-01** — M1-E: device secrets in the OS keychain (with file fallback and migration); sign-in screen with a remembered account; sign out that revokes the session on the homeserver and deletes the device's keys.
 - **2026-11-01** — M1-E: identity verification by emoji (Matrix SAS) with cross-signing, trust shown in profiles and member lists; key backup with a recovery key, restore on new devices, late-key re-decryption. Integration tests against Synapse for both.

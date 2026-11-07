@@ -13,7 +13,7 @@ Ranked: work from the top. Each gap names the catalog command ids it unlocks, if
 0.4 ~~Late keys~~ (done: undecryptable messages are retried when keys arrive and after restoring).
 0.5 ~~Sign-in screen, remembered account, sign out~~ (done, 2026-11-01). Still open: SSO/OIDC sign-in, a device list (sign out other devices), registration from the app.
 0.6 ~~Rich text from other clients~~ (done, 2026-11-01): HTML ↔ ChatCraft markup both ways.
-0.7 **Matrix coverage**: room directory browsing, pins (`m.room.pinned_events`), saved items and mutes (account data / push rules), archiving (tombstones), history paging, typing and read receipts display.
+0.7 Matrix coverage: ~~directory, pins, saved items, mutes~~ (done, 2026-11-01). Still open: archiving (tombstones or read-only power levels), history paging, typing and read-receipt display.
 0.8 **Browser client** over Matrix (matrix-sdk's IndexedDB store on wasm).
 0.9 **Retire `chatcraft-server`** once Matrix covers its features (or keep it as a tiny self-host option).
 

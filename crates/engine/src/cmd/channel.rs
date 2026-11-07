@@ -36,6 +36,11 @@ pub(super) fn commands() -> Vec<CommandSpec> {
             .key("Mod+N")
             .params(r#"{"users": ["@handle"]}"#)
             .when(signed_in),
+        CommandSpec::new("channel.directory", "Room directory", "Sidebar › Add channels", |s, v| {
+            s.submit(Op::Directory { query: p::str(v, "query").unwrap_or_default().to_string() })
+        })
+        .params(r#"{"query"?: string}"#)
+        .when(signed_in),
         CommandSpec::new("channel.browse", "Browse channels", "Sidebar › Add channels", browse).params(r#"{"query"?: string}"#).pure(),
         CommandSpec::new("channel.members", "Members", "Channel › Members", members).params(r#"{"channel"?}"#).pure(),
         CommandSpec::new("channel.info", "Channel details", "Channel › About", info).params(r#"{"channel"?}"#).pure(),
@@ -93,6 +98,13 @@ fn create(s: &mut Session, v: &Value) -> CmdResult {
 }
 
 fn join(s: &mut Session, v: &Value) -> CmdResult {
+    // A Matrix room this replica hasn't seen: a room id (`!abc`, or `!abc:server` in older room
+    // versions) or an alias (`#name:server`).
+    if let Some(room) = p::str(v, "channel").filter(|r| (r.starts_with('!') && r.len() > 1) || (r.starts_with('#') && r.contains(':')))
+        && s.state.resolve_channel(room, s.me).is_none()
+    {
+        return s.submit_and_open(Op::JoinExternal { room: room.to_string() });
+    }
     let c = s.target_channel(v)?;
     s.submit_and_open(Op::JoinChannel { channel: c })
 }

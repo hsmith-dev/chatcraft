@@ -90,6 +90,13 @@ fn main() {
         harness.run_steps(3);
     }
     harness.run_steps(6);
+    // A live account answers over the network: give it a moment.
+    if matrix.is_some() {
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            harness.run_steps(1);
+        }
+    }
     match harness.render() {
         Ok(img) => match img.save(&out) {
             Ok(()) => println!("{out}"),

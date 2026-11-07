@@ -153,6 +153,15 @@ pub enum Op {
     },
     /// Signs this device out and forgets it: session, secrets and local key store (Matrix only).
     SignOut,
+    /// Searches the homeserver's public room directory (Matrix only).
+    Directory {
+        #[serde(default)]
+        query: String,
+    },
+    /// Joins a room this replica doesn't know yet, by room id or alias (Matrix only).
+    JoinExternal {
+        room: String,
+    },
 }
 
 /// What the person does in a verification.
