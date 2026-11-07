@@ -33,6 +33,7 @@ end-to-end encryption instead of its own protocol. See [docs/matrix.md](docs/mat
 
 ## Progress log
 
+- **2026-11-01** — Older history loads on demand (scroll to the top); timelines, threads and read cursors now order by send time, so pages can arrive in any order.
 - **2026-11-01** — Typing indicators (Matrix `m.typing`; transient, never journaled). Parity 65/113.
 - **2026-11-01** — Your devices: list every signed-in device with trust and last activity, verify your own devices by emoji, sign a device out remotely (password-confirmed).
 - **2026-11-01** — Matrix coverage: pins, mutes and saved items live on the server (and in other clients where Matrix defines them); public room directory with join by id or address; public channels get an address. Fixed: names reset by message senders, stale state served by Synapse's sync cache on quick restarts, room v12 ids.

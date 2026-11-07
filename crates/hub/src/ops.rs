@@ -293,8 +293,9 @@ pub(crate) fn plan(hub: &mut Hub, actor: UserId, op: Op, now: Ts) -> Result<Plan
         Op::MarkRead { channel: id, upto } => {
             let s = &hub.state;
             channel(s, id, actor)?;
-            let upto = upto.min(s.latest(id).unwrap_or_default());
-            if upto <= s.last_read(actor, id) {
+            let latest = s.latest(id).unwrap_or_default();
+            let upto = if s.is_after(upto, latest) || s.message(upto).is_none() { latest } else { upto };
+            if !s.is_after(upto, s.last_read(actor, id)) {
                 return ok(Vec::new());
             }
             ok(vec![Event::ReadMarked { user: actor, channel: id, upto }])
@@ -316,6 +317,8 @@ pub(crate) fn plan(hub: &mut Hub, actor: UserId, op: Op, now: Ts) -> Result<Plan
             ok(vec![Event::ChannelStarred { user: actor, channel: id, starred }])
         }
         Op::Typing { .. } => ok(Vec::new()),
+        // The hub's replicas hold the whole history already.
+        Op::LoadOlder { .. } => Ok((Vec::new(), json!({ "loaded": 0, "more": false }), Vec::new())),
         Op::VerifyUser { .. }
         | Op::Verification { .. }
         | Op::SetUpRecovery

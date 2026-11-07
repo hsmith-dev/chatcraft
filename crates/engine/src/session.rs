@@ -111,6 +111,9 @@ pub struct Session {
     inline_req: Option<u64>,
     /// Requests whose answer names a conversation to open (create, join, new DM) when it arrives.
     open_on_ack: BTreeSet<u64>,
+    /// History requests in flight, by conversation; and conversations whose beginning is loaded.
+    history_requests: BTreeMap<u64, ChannelId>,
+    history_done: BTreeSet<ChannelId>,
 }
 
 impl Session {
@@ -136,6 +139,8 @@ impl Session {
             acks: BTreeMap::new(),
             inline_req: None,
             open_on_ack: BTreeSet::new(),
+            history_requests: BTreeMap::new(),
+            history_done: BTreeSet::new(),
         };
         s.pump();
         s
@@ -227,6 +232,39 @@ impl Session {
         self.take_ack(req)
     }
 
+    /// Whether a conversation may have history before what's loaded (the "load earlier
+    /// messages" control).
+    pub fn may_have_older(&self, c: ChannelId) -> bool {
+        self.link.pages_history() && !self.history_done.contains(&c)
+    }
+
+    /// A history request for `c` is in flight.
+    pub fn loading_older(&self, c: ChannelId) -> bool {
+        self.history_requests.values().any(|x| *x == c)
+    }
+
+    /// Asks for the page of history before what's loaded.
+    pub fn load_older(&mut self, c: ChannelId) -> CmdResult {
+        if self.loading_older(c) {
+            return Ok(json!({ "pending": true }));
+        }
+        let req = self.next_req;
+        self.history_requests.insert(req, c);
+        let r = self.submit(Op::LoadOlder { channel: c });
+        if r.as_ref().is_ok_and(|v| v.get("pending").is_none()) {
+            self.history_requests.remove(&req);
+        }
+        if let Ok(v) = &r
+            && v.get("more").and_then(Value::as_bool) == Some(false)
+        {
+            self.history_done.insert(c);
+        }
+        if r.is_err() {
+            self.history_requests.remove(&req);
+        }
+        r
+    }
+
     fn take_ack(&mut self, req: u64) -> Option<CmdResult> {
         let a = self.acks.remove(&req)?;
         self.awaited.remove(&req);
@@ -293,6 +331,11 @@ impl Session {
                     self.after_event(&s.event);
                 }
                 ServerFrame::Ack { req, ok, result, error } => {
+                    if let Some(c) = self.history_requests.remove(&req)
+                        && (!ok || result.get("more").and_then(Value::as_bool) == Some(false))
+                    {
+                        self.history_done.insert(c);
+                    }
                     if self.open_on_ack.remove(&req)
                         && ok
                         && let Some(c) = result.get("channel").and_then(Value::as_u64)
@@ -477,7 +520,7 @@ impl Session {
     fn first_unread(&self, c: ChannelId) -> Option<MessageId> {
         let me = self.me?;
         let read = self.state.last_read(me, c);
-        self.state.timeline(c).into_iter().find(|m| m.id > read && m.author != me).map(|m| m.id)
+        self.state.timeline(c).into_iter().find(|m| self.state.is_after(m.id, read) && m.author != me).map(|m| m.id)
     }
 
     pub(crate) fn go_back(&mut self) -> bool {

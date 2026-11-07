@@ -30,6 +30,10 @@ pub trait Transport: Send {
     fn set_waker(&mut self, _waker: Box<dyn Fn() + Send + Sync>) {}
     /// A short description for the status bar (`demo workspace`, `ws://host:7900`).
     fn describe(&self) -> String;
+    /// The replica starts with recent history only; older pages load on demand.
+    fn pages_history(&self) -> bool {
+        false
+    }
 }
 
 /// A hub in the same process: the demo workspace, offline use, tests and the browser build.

@@ -53,8 +53,17 @@ pub struct ChannelSummary {
     pub peer: Option<UserId>,
 }
 
-fn insert_sorted(v: &mut Vec<MessageId>, id: MessageId) {
-    if let Err(pos) = v.binary_search(&id) {
+/// Where a message sits in time: `(sent, id)`. Ids alone aren't chronological when older
+/// history is loaded later (Matrix pagination), so every index orders by this. Unknown ids sort
+/// first.
+fn order_of(messages: &BTreeMap<MessageId, Message>, id: MessageId) -> (Ts, MessageId) {
+    (messages.get(&id).map_or(Ts(i64::MIN), |m| m.ts), id)
+}
+
+fn insert_ordered(messages: &BTreeMap<MessageId, Message>, v: &mut Vec<MessageId>, id: MessageId) {
+    let key = order_of(messages, id);
+    let pos = v.partition_point(|x| order_of(messages, *x) < key);
+    if v.get(pos) != Some(&id) {
         v.insert(pos, id);
     }
 }
@@ -179,8 +188,11 @@ impl State {
                 }
             }
             Event::ReadMarked { user, channel, upto } => {
-                let r = self.reads.entry(*user).or_default().entry(*channel).or_default();
-                *r = (*r).max(*upto);
+                // Read cursors only move forward in time.
+                let current = self.last_read(*user, *channel);
+                if self.is_after(*upto, current) {
+                    self.reads.entry(*user).or_default().insert(*channel, *upto);
+                }
             }
             Event::SavedChanged { user, message, saved } => toggle(self.saved.entry(*user).or_default(), *message, *saved),
             Event::ChannelMuted { user, channel, muted } => toggle(self.muted.entry(*user).or_default(), *channel, *muted),
@@ -223,8 +235,10 @@ impl State {
         if let Some(t) = self.typing.get_mut(&m.channel) {
             t.remove(&m.author);
         }
+        // In the map first, so its own sort key is known when it's indexed.
+        self.messages.insert(m.id, m.clone());
         if let Some(root) = m.thread {
-            insert_sorted(self.replies.entry(root).or_default(), m.id);
+            insert_ordered(&self.messages, self.replies.entry(root).or_default(), m.id);
             if let Some(r) = self.messages.get_mut(&root) {
                 r.reply_count = r.reply_count.saturating_add(1);
                 r.last_reply = Some(r.last_reply.map_or(m.ts, |t| t.max(m.ts)));
@@ -232,9 +246,18 @@ impl State {
             }
         }
         if m.in_timeline() {
-            insert_sorted(self.timeline.entry(m.channel).or_default(), m.id);
+            insert_ordered(&self.messages, self.timeline.entry(m.channel).or_default(), m.id);
         }
-        self.messages.insert(m.id, m.clone());
+    }
+
+    /// Where a message sits in time (see [`order_of`]).
+    pub fn order(&self, id: MessageId) -> (Ts, MessageId) {
+        order_of(&self.messages, id)
+    }
+
+    /// `a` comes after `b` in time.
+    pub fn is_after(&self, a: MessageId, b: MessageId) -> bool {
+        self.order(a) > self.order(b)
     }
 
     fn delete(&mut self, id: MessageId) {
@@ -269,6 +292,10 @@ impl State {
             if m.in_timeline() {
                 self.timeline.entry(m.channel).or_default().push(m.id);
             }
+        }
+        let msgs = &self.messages;
+        for v in self.timeline.values_mut().chain(self.replies.values_mut()) {
+            v.sort_by_key(|id| order_of(msgs, *id));
         }
     }
 
@@ -357,7 +384,8 @@ impl State {
         let mut unread = 0;
         let mut mentions = 0;
         if let Some(ids) = self.timeline.get(&channel) {
-            let start = ids.partition_point(|id| *id <= read);
+            let read_at = self.order(read);
+            let start = ids.partition_point(|id| self.order(*id) <= read_at);
             for m in ids.get(start..).unwrap_or_default().iter().filter_map(|id| self.messages.get(id)) {
                 if m.author == user || m.deleted {
                     continue;
@@ -373,12 +401,14 @@ impl State {
 
     /// Messages that mention `user` (newest first), across the conversations they can see.
     pub fn mentions_of(&self, user: UserId, limit: usize) -> Vec<&Message> {
-        self.messages
+        let mut v: Vec<&Message> = self
+            .messages
             .values()
-            .rev()
             .filter(|m| !m.deleted && m.author != user && (m.mentions.contains(&user) || m.mentions_all) && self.can_see(user, m.channel))
-            .take(limit)
-            .collect()
+            .collect();
+        v.sort_by_key(|m| std::cmp::Reverse((m.ts, m.id)));
+        v.truncate(limit);
+        v
     }
 
     /// The title people see: `#name` for channels; other members' names for DMs.

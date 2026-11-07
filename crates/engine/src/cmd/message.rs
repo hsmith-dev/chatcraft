@@ -33,6 +33,13 @@ pub(super) fn commands() -> Vec<CommandSpec> {
         CommandSpec::new("message.copyLink", "Copy link", "Message › More actions", copy_link).params(r#"{"message": id}"#).pure(),
         CommandSpec::new("message.get", "Get message", "Agents", get).params(r#"{"message": id}"#).pure(),
         CommandSpec::new("message.list", "List messages", "Agents", list).params(r#"{"channel"?, "limit"?: number (default 50)}"#).pure(),
+        CommandSpec::new("message.loadOlder", "Load earlier messages", "Timeline", |s, v| {
+            let c = s.target_channel(v)?;
+            s.load_older(c)
+        })
+        .params(r#"{"channel"?}"#)
+        .pure()
+        .when(signed_in),
         CommandSpec::new("thread.open", "Open thread", "Message › Reply in thread", thread_open).params(r#"{"message": id}"#).pure(),
         CommandSpec::new("thread.close", "Close thread", "Thread", thread_close).key("Escape").pure(),
         CommandSpec::new("thread.list", "List replies", "Agents", thread_list).params(r#"{"message": id}"#).pure(),
