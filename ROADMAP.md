@@ -10,7 +10,7 @@ clients; a durable WebSocket server; the command registry; measured parity.
 | Slack/Teams parity (catalogued features with a command) | **66 / 113 (58%)** |
 | Engine commands | 65 (+ 9 UI commands) |
 | Tests | 65, including hostile-input sweeps over every command and op, and a real-socket end-to-end test |
-| Platforms | macOS, Windows, Linux, BSD (native), web (wasm, demo workspace) |
+| Platforms | macOS, Windows, Linux, BSD (native), web (wasm: Matrix with end-to-end encryption, or the demo workspace) |
 
 Details: [docs/roadmap.md](docs/roadmap.md) (milestones), [docs/gaps.md](docs/gaps.md) (ranked work
 list), [docs/target-app-parity.md](docs/target-app-parity.md) (assessment),
@@ -33,6 +33,7 @@ end-to-end encryption instead of its own protocol. See [docs/matrix.md](docs/mat
 
 ## Progress log
 
+- **2026-11-01** — The web app signs in to Matrix homeservers, with end-to-end encryption in the browser (IndexedDB store); checked in headless Chrome against Synapse.
 - **2026-11-01** — Read receipts: "Seen by" where each person stopped reading (Matrix public receipts). Parity 66/113.
 - **2026-11-01** — Archiving over Matrix: archived channels are read-only for every client (power levels), restorable exactly.
 - **2026-11-01** — Older history loads on demand (scroll to the top); timelines, threads and read cursors now order by send time, so pages can arrive in any order.

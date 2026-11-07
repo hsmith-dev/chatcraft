@@ -80,7 +80,7 @@ cargo run --release -p chatcraft-server -- --data ./chatcraft-data --name "My Te
 cargo run --release -p chatcraft -- --server ws://127.0.0.1:7900 --handle ada --token <TOKEN>
 cargo run --release -p chatcraft -- --server ws://127.0.0.1:7900 --handle bo  --token <TOKEN> --dark
 
-# In the browser (demo workspace)
+# In the browser: sign in to a homeserver (encryption runs in the page), or ?demo
 cd apps/chatcraft-web && trunk serve
 ```
 

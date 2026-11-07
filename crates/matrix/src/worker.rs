@@ -56,6 +56,7 @@ pub(crate) fn account(cfg: &MatrixConfig) -> String {
 
 /// Returns the client and whether this was a fresh password sign-in (a new device).
 async fn sign_in(cfg: &MatrixConfig) -> R<(Client, bool)> {
+    #[cfg(not(target_family = "wasm"))]
     std::fs::create_dir_all(&cfg.store_dir).map_err(|e| format!("{}: {e}", cfg.store_dir.display()))?;
     let mut secrets = Secrets::new(cfg.secrets, &cfg.store_dir, &account(cfg));
     let pass = match secrets.get("passphrase") {
@@ -66,9 +67,13 @@ async fn sign_in(cfg: &MatrixConfig) -> R<(Client, bool)> {
             p
         }
     };
-    let client = Client::builder()
-        .server_name_or_homeserver_url(&cfg.homeserver)
-        .sqlite_store(cfg.store_dir.join("store"), Some(&pass))
+    let builder = Client::builder().server_name_or_homeserver_url(&cfg.homeserver);
+    // The device's store, encrypted with the passphrase: SQLite natively, IndexedDB in a browser.
+    #[cfg(not(target_family = "wasm"))]
+    let builder = builder.sqlite_store(cfg.store_dir.join("store"), Some(&pass));
+    #[cfg(target_family = "wasm")]
+    let builder = builder.indexeddb_store(&format!("chatcraft-{}", account(cfg)), Some(&pass));
+    let client = builder
         // Once recovery is set up, room keys are backed up as they arrive, and a key missing on
         // this device is looked up in the backup.
         .with_encryption_settings(matrix_sdk::encryption::EncryptionSettings {
@@ -970,6 +975,9 @@ async fn forget_device(cfg: &MatrixConfig) {
     let mut secrets = Secrets::new(cfg.secrets, &cfg.store_dir, &account(cfg));
     secrets.delete("session");
     secrets.delete("passphrase");
+    // In a browser the IndexedDB store stays behind, but without its passphrase it can't be
+    // opened (a fresh sign-in creates a new device and passphrase).
+    #[cfg(not(target_family = "wasm"))]
     if let Err(e) = std::fs::remove_dir_all(&cfg.store_dir) {
         log::warn!("removing {}: {e}", cfg.store_dir.display());
     }
@@ -1048,7 +1056,7 @@ pub(crate) async fn run(
     let sync_client = client.clone();
     let status2 = Arc::clone(&status);
     let waker2 = Arc::clone(&waker);
-    tokio::spawn(async move {
+    crate::rt::spawn(async move {
         let mut backoff = Duration::from_secs(1);
         loop {
             match sync_client.sync_once(sync_settings()).await {
@@ -1062,7 +1070,7 @@ pub(crate) async fn run(
                 Err(e) => {
                     set_status(&status2, LinkStatus::Offline(format!("{e}; retrying")));
                     wake(&waker2);
-                    tokio::time::sleep(backoff).await;
+                    crate::rt::sleep(backoff).await;
                     backoff = (backoff * 2).min(Duration::from_secs(30));
                 }
             }

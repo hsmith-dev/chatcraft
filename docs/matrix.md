@@ -1,6 +1,6 @@
 # Matrix and end-to-end encryption
 
-_Status: 2026-11-01 · revision 5 (your devices)_
+_Status: 2026-11-01 · revision 6 (web app)_
 
 ChatCraft speaks **Matrix**, the open, federated chat standard, instead of a protocol of its own
 (the direction proposed in storytold/artcraft#2138). Any Matrix homeserver works — Synapse,
@@ -18,6 +18,27 @@ chatcraft-cli run --matrix https://matrix.example.org --as alice \
 ```
 
 The password (`--password` or `CHATCRAFT_PASSWORD`) is needed only the first time on a device.
+
+### In the browser
+
+The web app (`apps/chatcraft-web`, `trunk serve`) signs in to a homeserver the same way, with
+end-to-end encryption running in the page:
+
+- the device's store is **IndexedDB**, encrypted with a random passphrase (Web Crypto);
+- the session and that passphrase are kept in the browser's `localStorage`, as other Matrix web
+  clients do. Anything that can run script on the page's origin could read them, so serve the
+  app from its own origin with a strict Content-Security-Policy;
+- `#homeserver=matrix.example.org&user=alice` prefills the form (never a password); `?demo`
+  opens the demo workspace;
+- the homeserver must allow cross-origin requests from the page (Matrix homeservers do by
+  default);
+- release builds use the size-tuned `web` Cargo profile (`opt-level = "z"`, fat LTO, stripped):
+  about 16 MB of WebAssembly, 4.2 MB with Brotli. `wasm-opt` is off because it saved nothing
+  after compression.
+
+Checked by hand in headless Chrome against Synapse: sign-in, a wrong password's error, an
+encrypted DM from another client decrypted after a reload (account resumed without a password,
+device restored from IndexedDB). An automated browser test is a tracked gap.
 
 ## How it fits
 

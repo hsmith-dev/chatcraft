@@ -10,17 +10,23 @@
 use std::path::{Path, PathBuf};
 
 /// Service name for keychain entries.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const SERVICE: &str = "ChatCraft";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SecretStore {
     Keychain,
     Files,
+    /// The browser's `localStorage` (the web app; same-origin only, like other web clients).
+    Browser,
 }
 
 impl SecretStore {
     /// The keychain where the platform has one; `CHATCRAFT_SECRETS=files` forces files.
     pub fn default_for_platform() -> SecretStore {
+        if cfg!(target_family = "wasm") {
+            return SecretStore::Browser;
+        }
         if std::env::var("CHATCRAFT_SECRETS").is_ok_and(|v| v.eq_ignore_ascii_case("files")) {
             return SecretStore::Files;
         }
@@ -99,12 +105,53 @@ impl Secrets {
         Ok(())
     }
 
+    #[cfg(target_family = "wasm")]
+    fn browser(&self) -> Option<web_sys::Storage> {
+        web_sys::window()?.local_storage().ok()?
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn browser_key(&self, name: &str) -> String {
+        format!("chatcraft:{}/{name}", self.account)
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn browser_get(&self, name: &str) -> Option<String> {
+        self.browser()?.get_item(&self.browser_key(name)).ok()?
+    }
+    #[cfg(target_family = "wasm")]
+    fn browser_set(&self, name: &str, value: &str) -> Result<(), String> {
+        self.browser()
+            .ok_or("no browser storage")?
+            .set_item(&self.browser_key(name), value)
+            .map_err(|_| "browser storage refused the write".to_string())
+    }
+    #[cfg(target_family = "wasm")]
+    fn browser_delete(&self, name: &str) {
+        if let Some(s) = self.browser() {
+            let _ = s.remove_item(&self.browser_key(name));
+        }
+    }
+    #[cfg(not(target_family = "wasm"))]
+    fn browser_get(&self, _: &str) -> Option<String> {
+        None
+    }
+    #[cfg(not(target_family = "wasm"))]
+    fn browser_set(&self, _: &str, _: &str) -> Result<(), String> {
+        Err("browser storage only exists in the web app".into())
+    }
+    #[cfg(not(target_family = "wasm"))]
+    fn browser_delete(&self, _: &str) {}
+
     fn file_get(&self, name: &str) -> Option<String> {
         std::fs::read_to_string(self.file(name)).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
     }
 
     /// Reads a secret. A file left from before moves into the keychain.
     pub fn get(&mut self, name: &str) -> Option<String> {
+        if self.store == SecretStore::Browser {
+            return self.browser_get(name);
+        }
         if self.store == SecretStore::Files {
             return self.file_get(name);
         }
@@ -126,6 +173,9 @@ impl Secrets {
 
     /// Stores a secret (keychain, or a private file when the keychain fails).
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
+        if self.store == SecretStore::Browser {
+            return self.browser_set(name, value);
+        }
         if self.store == SecretStore::Keychain {
             match self.keychain_set(name, value) {
                 Ok(()) => {
@@ -140,6 +190,10 @@ impl Secrets {
 
     /// Forgets a secret everywhere it might be.
     pub fn delete(&mut self, name: &str) {
+        if self.store == SecretStore::Browser {
+            self.browser_delete(name);
+            return;
+        }
         if self.store == SecretStore::Keychain {
             let _ = self.keychain_delete(name);
         }
