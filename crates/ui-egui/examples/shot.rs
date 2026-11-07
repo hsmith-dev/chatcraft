@@ -24,12 +24,15 @@ fn main() {
     let mut verify_demo = false;
     // `--typing`: Ada and Ravi are typing in the open conversation.
     let mut typing_demo = false;
+    // `--seen`: Ada and Ravi have read up to the last message of the open conversation.
+    let mut seen_demo = false;
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--dark" => dark = true,
             "--verify-emoji" => verify_demo = true,
             "--typing" => typing_demo = true,
+            "--seen" => seen_demo = true,
             "--matrix" => matrix = it.next().cloned(),
             "--user" => user = it.next().cloned().unwrap_or_default(),
             "--password" => password = it.next().cloned().unwrap_or_default(),
@@ -72,6 +75,16 @@ fn main() {
     if typing_demo && let Some(c) = app.session.view.channel {
         let users: Vec<_> = ["ada", "ravi"].iter().filter_map(|h| app.session.state.user_by_handle(h)).map(|u| u.id).collect();
         app.session.state.apply_event(&chatcraft_engine::model::Event::Typing { channel: c, users });
+    }
+    if seen_demo
+        && let Some(c) = app.session.view.channel
+        && let Some(last) = app.session.state.latest(c)
+    {
+        for h in ["ada", "ravi"] {
+            if let Some(u) = app.session.state.user_by_handle(h).map(|u| u.id) {
+                app.session.state.apply_event(&chatcraft_engine::model::Event::Receipt { channel: c, user: u, upto: last });
+            }
+        }
     }
     if verify_demo && let Some(u) = app.session.state.user_by_handle("ada").map(|u| u.id) {
         let emoji = [("🔧", "Spanner"), ("☂️", "Umbrella"), ("🔑", "Key"), ("🦄", "Unicorn"), ("🐘", "Elephant"), ("⚽", "Ball"), ("🌵", "Cactus")];

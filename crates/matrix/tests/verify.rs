@@ -457,3 +457,31 @@ fn archived_channels_are_read_only_for_everyone() {
     until(&mut jo, &mut kit, "Jo gets the message", |j, _| j.state.messages.values().any(|m| m.text == "back in business"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn senders_see_who_has_read_their_message() {
+    let (Some(hs), Some(_)) = (env("CHATCRAFT_TEST_HOMESERVER"), env("CHATCRAFT_TEST_REGISTER")) else {
+        eprintln!("skipped: set CHATCRAFT_TEST_HOMESERVER and CHATCRAFT_TEST_REGISTER=1");
+        return;
+    };
+    let server = env("CHATCRAFT_TEST_SERVER_NAME").unwrap_or_else(|| "localhost".into());
+    let tag = format!("{}{}", std::process::id(), Instant::now().elapsed().as_nanos() % 1000);
+    let (a_name, b_name) = (format!("lu{tag}"), format!("mo{tag}"));
+    register(&hs, &a_name, "pw-lu-12345");
+    register(&hs, &b_name, "pw-mo-12345");
+    let dir = std::env::temp_dir().join(format!("chatcraft-receipts-{tag}"));
+    let mut lu = session(&hs, &a_name, "pw-lu-12345", &dir.join("lu"));
+    let mut mo = session(&hs, &b_name, "pw-mo-12345", &dir.join("mo"));
+    run(&mut lu, "dm.open", json!({ "users": [format!("@{b_name}:{server}")] }));
+    until(&mut lu, &mut mo, "Mo joins the DM", |_, m| m.state.channels.values().any(|c| c.kind.is_dm()));
+    let r = run(&mut lu, "message.send", json!({ "text": "did you see this?" }));
+    let mid = chatcraft_engine::model::MessageId(r["message"].as_u64().unwrap());
+    assert!(lu.state.read_by(mid).is_empty());
+    until(&mut lu, &mut mo, "Mo gets it", |_, m| m.state.messages.values().any(|x| x.text == "did you see this?"));
+    let mc = mo.state.channels.values().find(|c| c.kind.is_dm()).unwrap().id;
+    run(&mut mo, "channel.markRead", json!({ "channel": mc.to_string() }));
+    until(&mut lu, &mut mo, "Lu sees Mo read it", |l, _| l.state.seen_at(mid).iter().any(|u| l.state.user(*u).is_some_and(|p| p.handle == b_name)));
+    let who = run(&mut lu, "message.readReceipts", json!({ "message": mid.0 }));
+    assert_eq!(who["readBy"][0]["handle"], b_name.as_str());
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -128,6 +128,13 @@ pub enum Event {
     MessageReplaced {
         message: Message,
     },
+    /// Someone's public read receipt moved (Matrix; the in-process hub keeps read positions
+    /// private and never emits this).
+    Receipt {
+        channel: ChannelId,
+        user: UserId,
+        upto: MessageId,
+    },
     /// Who is typing in a conversation right now (transient: never journaled, not in snapshots).
     Typing {
         channel: ChannelId,
@@ -160,6 +167,7 @@ impl Event {
             | Event::MemberJoined { channel, .. }
             | Event::MemberLeft { channel, .. }
             | Event::Typing { channel, .. }
+            | Event::Receipt { channel, .. }
             | Event::DefaultChannelSet { channel } => Some(*channel),
             _ => None,
         }

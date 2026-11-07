@@ -39,6 +39,7 @@ UI, the CLI and MCP are unchanged:
 | Star | `m.favourite` tag |
 | Archive | Read-only for everyone: the level needed to post (`events_default`) is raised to admin, and `dev.chatcraft.archived` room state remembers the old level for unarchiving. Needs admin rights in the room; other Matrix clients see a read-only room |
 | History | The snapshot carries the latest 100 events per room; *Load earlier messages* (automatic when you scroll to the top) pages back with `/messages`. Timelines order by send time, so older pages slot in correctly |
+| Read receipts | Public `m.read` receipts are sent when you read and shown as small "Seen by" avatars where each person stopped; `message.readReceipts` lists who has read a message. (The in-process hub keeps read positions private) |
 | Typing | `m.typing` notices (sent at most every 4 s while composing, cleared on send); shown above the composer |
 | Pin | `m.room.pinned_events` (shared with other clients) |
 | Mute | A room push rule (the same mechanism other clients use) |

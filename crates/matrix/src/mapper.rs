@@ -235,6 +235,19 @@ impl Mapper {
         id
     }
 
+    /// A public read receipt: `mxid` has read up to `event_id` (ours are tracked as read cursors).
+    pub fn set_receipt(&mut self, room_id: &str, event_id: &str, mxid: &str) {
+        let (Some(channel), Some(upto)) = (self.known_channel(room_id), self.events.get(event_id).map(MessageId)) else { return };
+        let user = self.user(mxid, None);
+        if Some(user) == self.me {
+            return;
+        }
+        let current = self.state.receipts.get(&channel).and_then(|r| r.get(&user)).copied().unwrap_or_default();
+        if self.state.is_after(upto, current) {
+            self.emit(Event::Receipt { channel, user, upto });
+        }
+    }
+
     /// `m.typing`: who is typing in a room (we never list ourselves).
     pub fn set_typing(&mut self, room_id: &str, mxids: &[String]) {
         let Some(channel) = self.known_channel(room_id) else { return };

@@ -370,6 +370,9 @@ pub(crate) fn row(app: &mut ChatApp, ui: &mut Ui, m: &Message, compact: bool, in
                 if m.reply_count > 0 && !in_thread {
                     thread_summary(app, ui, m, acts);
                 }
+                if !in_thread {
+                    seen_by(app, ui, m);
+                }
             });
         })
         .response;
@@ -487,6 +490,31 @@ fn reactions(app: &mut ChatApp, ui: &mut Ui, m: &Message, acts: &mut Vec<Act>) {
             acts.push(Act::Picker(PickFor::React(m.id), resp.rect.left_bottom() + vec2(0.0, 4.0)));
         }
     });
+}
+
+/// Small avatars of the people whose read receipt stopped at this message.
+fn seen_by(app: &ChatApp, ui: &mut Ui, m: &Message) {
+    let seen = app.session.state.seen_at(m.id);
+    if seen.is_empty() {
+        return;
+    }
+    let t = &app.tokens;
+    let people: Vec<_> = seen.iter().filter_map(|u| app.session.state.user(*u)).collect();
+    let names: Vec<&str> = people.iter().map(|u| u.name()).collect();
+    let r = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.label(RichText::new("Seen by").small().color(t.faint));
+            ui.add_space(2.0);
+            for u in people.iter().take(5) {
+                avatar::show(ui, 16.0, Some(u), t, None);
+            }
+            if people.len() > 5 {
+                ui.label(RichText::new(format!("+{}", people.len() - 5)).small().color(t.muted));
+            }
+        })
+        .response;
+    r.on_hover_text(format!("Seen by {}", names.join(", ")));
 }
 
 fn thread_summary(app: &mut ChatApp, ui: &mut Ui, m: &Message, acts: &mut Vec<Act>) {

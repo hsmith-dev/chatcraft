@@ -32,6 +32,14 @@ pub(super) fn commands() -> Vec<CommandSpec> {
             .when(signed_in),
         CommandSpec::new("message.copyLink", "Copy link", "Message › More actions", copy_link).params(r#"{"message": id}"#).pure(),
         CommandSpec::new("message.get", "Get message", "Agents", get).params(r#"{"message": id}"#).pure(),
+        CommandSpec::new("message.readReceipts", "Read by", "Message › Seen by", |s, v| {
+            let id = p::req_message(v, "message")?;
+            let names: Vec<serde_json::Value> =
+                s.state.read_by(id).iter().filter_map(|u| s.state.user(*u)).map(|u| json!({ "handle": u.handle, "name": u.name() })).collect();
+            Ok(json!({ "message": id, "readBy": names }))
+        })
+        .params(r#"{"message": id}"#)
+        .pure(),
         CommandSpec::new("message.list", "List messages", "Agents", list).params(r#"{"channel"?, "limit"?: number (default 50)}"#).pure(),
         CommandSpec::new("message.loadOlder", "Load earlier messages", "Timeline", |s, v| {
             let c = s.target_channel(v)?;
