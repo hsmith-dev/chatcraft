@@ -278,9 +278,10 @@ impl Worker {
         }
     }
 
-    /// A verification request someone sent us (in a room or to this device).
-    async fn incoming_request(&mut self, sender: &str, flow: &str) {
-        if self.verify.knows(flow) || sender == self.me.as_str() {
+    /// A verification request someone sent us (in a room or to this device). `own_ok`: it came
+    /// to this device directly, so it may be from another of our own devices.
+    async fn incoming_request(&mut self, sender: &str, flow: &str, own_ok: bool) {
+        if self.verify.knows(flow) || (sender == self.me.as_str() && !own_ok) {
             return;
         }
         let Ok(uid) = UserId::parse(sender) else { return };
@@ -352,14 +353,14 @@ impl Worker {
     }
 
     async fn absorb_rooms(&mut self, r: &SyncResponse) {
-        let mut requests: Vec<(String, String)> = Vec::new();
+        let mut requests: Vec<(String, String, bool)> = Vec::new();
         for ev in &r.to_device {
             let Ok(json) = serde_json::from_str::<Value>(ev.as_raw().json().get()) else { continue };
             if json.get("type").and_then(Value::as_str) == Some("m.key.verification.request")
                 && let (Some(s), Some(f)) =
                     (json.get("sender").and_then(Value::as_str), json.get("content").and_then(|c| c.get("transaction_id")).and_then(Value::as_str))
             {
-                requests.push((s.to_string(), f.to_string()));
+                requests.push((s.to_string(), f.to_string(), true));
             }
         }
         for up in r.rooms.joined.values() {
@@ -369,12 +370,12 @@ impl Worker {
                 if msgtype == Some("m.key.verification.request")
                     && let (Some(s), Some(e)) = (json.get("sender").and_then(Value::as_str), json.get("event_id").and_then(Value::as_str))
                 {
-                    requests.push((s.to_string(), e.to_string()));
+                    requests.push((s.to_string(), e.to_string(), false));
                 }
             }
         }
-        for (sender, flow) in requests {
-            self.incoming_request(&sender, &flow).await;
+        for (sender, flow, own_ok) in requests {
+            self.incoming_request(&sender, &flow, own_ok).await;
         }
         for (rid, up) in &r.rooms.joined {
             if let Some(room) = self.client.get_room(rid) {
@@ -789,6 +790,71 @@ impl Worker {
                 let joined = self.client.join_room_by_id_or_alias(&id, &[]).await.map_err(err)?;
                 let info = self.info(&joined).await;
                 Ok(json!({ "channel": self.map.upsert_room(&info) }))
+            }
+            Op::Devices => {
+                let list = self.client.devices().await.map_err(err)?;
+                // Fetch our device keys fresh, so devices that signed in recently have their trust state.
+                let _ = self.client.encryption().request_user_identity(&self.me).await;
+                let this = self.client.device_id().map(ToString::to_string).unwrap_or_default();
+                let enc = self.client.encryption();
+                let mut out = Vec::new();
+                for d in &list.devices {
+                    let verified = enc.get_device(&self.me, &d.device_id).await.ok().flatten().is_some_and(|x| x.is_verified());
+                    out.push(json!({
+                        "id": d.device_id.to_string(),
+                        "name": d.display_name.clone().unwrap_or_else(|| d.device_id.to_string()),
+                        "lastSeen": d.last_seen_ts.map(|t| u64::from(t.0)),
+                        "lastSeenIp": d.last_seen_ip,
+                        "thisDevice": d.device_id.as_str() == this,
+                        "verified": verified,
+                    }));
+                }
+                // This device first, then the most recently active.
+                out.sort_by_key(|d| {
+                    (std::cmp::Reverse(d["thisDevice"].as_bool().unwrap_or(false)), std::cmp::Reverse(d["lastSeen"].as_u64().unwrap_or(0)))
+                });
+                Ok(json!({ "devices": out }))
+            }
+            Op::VerifyDevice { device } => {
+                if self.client.device_id().is_some_and(|d| d.as_str() == device) {
+                    return Err("that's this device".into());
+                }
+                let id: matrix_sdk::ruma::OwnedDeviceId = device.as_str().into();
+                let enc = self.client.encryption();
+                let dev = match enc.get_device(&self.me, &id).await.map_err(err)? {
+                    Some(d) => d,
+                    None => {
+                        // A device that signed in after our last key query: ask the server.
+                        let _ = enc.request_user_identity(&self.me).await;
+                        enc.get_device(&self.me, &id).await.map_err(err)?.ok_or_else(|| format!("device `{device}` has no encryption keys yet"))?
+                    }
+                };
+                let request = dev.request_verification().await.map_err(err)?;
+                let flow = request.flow_id().to_string();
+                let me = self.map.me().unwrap_or_default();
+                if let Some(u) = self.verify.track(request, me) {
+                    self.outbox.push(ServerFrame::Verification(u));
+                }
+                Ok(json!({ "flow": flow }))
+            }
+            Op::RemoveDevice { device, password } => {
+                if self.client.device_id().is_some_and(|d| d.as_str() == device) {
+                    return Err("that's this device: use Sign out".into());
+                }
+                let ids = [matrix_sdk::ruma::OwnedDeviceId::from(device.as_str())];
+                // The homeserver asks for the password (user-interactive auth) before removing a device.
+                if let Err(e) = self.client.delete_devices(&ids, None).await {
+                    use matrix_sdk::ruma::api::client::uiaa;
+                    let Some(info) = e.as_uiaa_response() else { return Err(err(e)) };
+                    let mut pw =
+                        uiaa::Password::new(uiaa::UserIdentifier::Matrix(uiaa::MatrixUserIdentifier::new(self.me.localpart().to_string())), password);
+                    pw.session = info.session.clone();
+                    self.client
+                        .delete_devices(&ids, Some(uiaa::AuthData::Password(pw)))
+                        .await
+                        .map_err(|e| format!("couldn't sign that device out: {e}"))?;
+                }
+                Ok(json!({ "removed": device }))
             }
             Op::Archive { .. } => Err("archiving isn't available on Matrix yet".into()),
             Op::RenameWorkspace { .. } => Err("a Matrix homeserver has no workspace name to change".into()),

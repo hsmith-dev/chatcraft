@@ -1,6 +1,6 @@
 # Matrix and end-to-end encryption
 
-_Status: 2026-11-01 · revision 4 (pins, mute, saved, directory)_
+_Status: 2026-11-01 · revision 5 (your devices)_
 
 ChatCraft speaks **Matrix**, the open, federated chat standard, instead of a protocol of its own
 (the direction proposed in storytold/artcraft#2138). Any Matrix homeserver works — Synapse,
@@ -82,6 +82,13 @@ servers share a localpart. People not met yet can be invited by Matrix ID (`@bob
 - The emoji's name is always shown; the four the bundled font can't draw (lion, unicorn,
   butterfly, robot) show the name only, never a blank box (`ui-egui/src/sas.rs`).
 
+### Your devices
+
+Profile menu › **Your devices** lists every device signed in to the account (this one first),
+with when it was last active and whether it's verified. **Verify** runs the same emoji comparison
+with your other device (the request goes to that device directly; it must accept). **Sign out**
+removes a device remotely after the homeserver asks for your password — use it for a lost laptop.
+
 ### Key backup and recovery
 
 - **Set up key backup** (profile menu › Encryption and key backup, or `security.setupRecovery`)
@@ -94,8 +101,8 @@ servers share a localpart. People not met yet can be invited by Matrix ID (`@bob
 
 ### Not done yet (see gaps.md)
 
-- Verifying **your own** devices (and QR-code verification); a stricter trust policy (only send
-  keys to verified devices) as an option; warnings when a verified person's identity changes.
+- QR-code verification; a stricter trust policy (only send keys to verified devices) as an option;
+  warnings when a verified person's identity changes.
 - Archiving over Matrix; images, tables and headings in received HTML are reduced to their text.
 - Encrypted public channels are possible in Matrix but not offered: anyone may join them, so
   encryption adds little and breaks history for newcomers.

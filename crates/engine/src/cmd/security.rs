@@ -27,6 +27,17 @@ pub(super) fn commands() -> Vec<CommandSpec> {
         })
         .params(r#"{"key": "recovery key"}"#)
         .when(signed_in),
+        CommandSpec::new("security.devices", "Your devices", "Profile menu › Your devices", |s, _| s.submit(Op::Devices)).pure(),
+        CommandSpec::new("security.verifyDevice", "Verify device", "Your devices", |s, v| {
+            s.submit(Op::VerifyDevice { device: p::req_str(v, "device")?.to_string() })
+        })
+        .params(r#"{"device": "device id"}"#)
+        .when(signed_in),
+        CommandSpec::new("security.removeDevice", "Sign out a device", "Your devices", |s, v| {
+            s.submit(Op::RemoveDevice { device: p::req_str(v, "device")?.to_string(), password: p::req_str(v, "password")?.to_string() })
+        })
+        .params(r#"{"device": "device id", "password": string}"#)
+        .when(signed_in),
         CommandSpec::new("session.signOut", "Sign out", "Profile menu", |s, _| s.submit(Op::SignOut)).when(signed_in),
         CommandSpec::new("security.status", "Encryption status", "Profile › Security", status).pure(),
     ]

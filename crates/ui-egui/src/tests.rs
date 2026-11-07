@@ -56,7 +56,7 @@ fn ui_commands_open_dialogs_and_panes() {
     h.state_mut().run("ui.toggleTheme", &json!({})).unwrap();
     h.run_steps(2);
     assert_eq!(h.state().tokens.mode, crate::Mode::Dark);
-    for id in ["ui.newChannel", "ui.browseChannels", "ui.newMessage", "ui.people", "ui.setStatus", "ui.shortcuts", "ui.recovery"] {
+    for id in ["ui.newChannel", "ui.browseChannels", "ui.newMessage", "ui.people", "ui.setStatus", "ui.shortcuts", "ui.recovery", "ui.devices"] {
         h.state_mut().run(id, &json!({})).unwrap();
         h.run_steps(2);
         h.state_mut().run("ui.closeDialog", &json!({})).unwrap();

@@ -40,6 +40,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.shortcuts", "Keyboard shortcuts", "Mod+/"),
     ("ui.focusSearch", "Search", "Mod+F"),
     ("ui.recovery", "Encryption and key backup", "Mod+Shift+R"),
+    ("ui.devices", "Your devices", ""),
     ("ui.signOut", "Sign out", ""),
 ];
 
@@ -101,6 +102,14 @@ pub(crate) enum Dialog {
         message: Option<(String, bool)>,
     },
     SignOut,
+    /// The account's devices: list, verify, sign out remotely.
+    Devices {
+        list: Option<Vec<Value>>,
+        waiting: Option<u64>,
+        removing: Option<(String, String)>,
+        message: Option<(String, bool)>,
+        pending_remove: Option<u64>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,6 +215,7 @@ impl ChatApp {
             "ui.recovery" => self.st.dialog = Some(Dialog::Recovery { key: None, input: String::new(), waiting: None, message: None }),
             "ui.closeDialog" => self.st.dialog = None,
             "ui.signOut" => self.st.dialog = Some(Dialog::SignOut),
+            "ui.devices" => self.st.dialog = Some(Dialog::Devices { list: None, waiting: None, removing: None, message: None, pending_remove: None }),
             _ if id.starts_with("ui.") => return Err(format!("unknown UI command `{id}`")),
             _ => {
                 let r = self.session.run(id, params).map_err(|e| e.to_string());

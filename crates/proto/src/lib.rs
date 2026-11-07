@@ -162,6 +162,17 @@ pub enum Op {
     JoinExternal {
         room: String,
     },
+    /// Lists the account's signed-in devices (Matrix only).
+    Devices,
+    /// Starts verifying another of your own devices by emoji comparison (Matrix only).
+    VerifyDevice {
+        device: String,
+    },
+    /// Signs another of your devices out remotely; the homeserver asks for the password.
+    RemoveDevice {
+        device: String,
+        password: String,
+    },
 }
 
 /// What the person does in a verification.
