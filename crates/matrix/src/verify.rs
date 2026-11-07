@@ -203,6 +203,11 @@ pub(crate) async fn bootstrap_cross_signing(client: &Client, user: &str, passwor
         Ok(()) => Ok(()),
         Err(e) => {
             let Some(uiaa_info) = e.as_uiaa_response() else { return Err(e.to_string()) };
+            if password.is_empty() {
+                // Signed in with single sign-on: the homeserver wants the upload confirmed in a
+                // browser, which ChatCraft can't do yet.
+                return Err("the homeserver wants this confirmed in a browser, which ChatCraft doesn't support yet".into());
+            }
             let mut pw = uiaa::Password::new(
                 uiaa::UserIdentifier::Matrix(uiaa::MatrixUserIdentifier::new(
                     user.trim_start_matches('@').split(':').next().unwrap_or(user).to_string(),

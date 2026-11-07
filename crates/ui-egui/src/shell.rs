@@ -1,7 +1,8 @@
 //! The window around a session: sign in, connect, chat, sign out.
 //!
 //! The UI crate doesn't know how to reach a homeserver (it also runs in the browser); the app
-//! binary passes a [`Connect`] function that turns [`Credentials`] into a [`Session`].
+//! binary passes a [`Connect`] function that turns [`Credentials`] into a [`Session`], and
+//! optionally an [`SsoStart`] for single sign-on.
 
 use chatcraft_engine::{LinkStatus, Session};
 use egui::{FontId, Frame, Margin, RichText, Ui, vec2};
@@ -14,7 +15,31 @@ pub struct Credentials {
     pub homeserver: String,
     pub user: String,
     pub password: String,
+    /// A single-sign-on login token (instead of the password). Never remembered.
+    pub login_token: String,
 }
+
+impl Credentials {
+    /// The same account without its secrets (what may be remembered or shown again).
+    pub fn without_secrets(&self) -> Credentials {
+        Credentials { homeserver: self.homeserver.clone(), user: self.user.clone(), ..Credentials::default() }
+    }
+}
+
+/// How a single sign-on is going.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SsoPoll {
+    Waiting,
+    /// Open this page in the browser (once).
+    Open(String),
+    /// Signed in at the identity provider: connect with this login token.
+    Token(String),
+    Failed(String),
+}
+
+/// Starts a single sign-on for the homeserver in the credentials; the returned function is
+/// polled every frame until it gives a token or fails. Dropping it cancels.
+pub type SsoStart = Box<dyn FnMut(&Credentials) -> Result<Box<dyn FnMut() -> SsoPoll>, String>>;
 
 /// Starts a session for credentials (it may still be signing in when it returns).
 pub type Connect = Box<dyn FnMut(&Credentials) -> Result<Session, String>>;
@@ -37,6 +62,7 @@ struct Form {
 enum Screen {
     SignIn(Form),
     Connecting { session: Box<Session>, creds: Credentials },
+    Sso { creds: Credentials, poll: Box<dyn FnMut() -> SsoPoll>, url: Option<String> },
     Chat { app: Box<ChatApp>, creds: Option<Credentials> },
 }
 
@@ -44,6 +70,8 @@ enum Screen {
 pub struct Shell {
     screen: Screen,
     connect: Connect,
+    /// Single sign-on, where the app supports it (the form offers it only then).
+    pub sso: Option<SsoStart>,
     /// Called after a successful sign-in (to remember the account; never the password).
     pub on_signed_in: Option<Box<dyn FnMut(&Credentials)>>,
     /// Called after signing out (to forget the account).
@@ -57,6 +85,7 @@ impl Shell {
         let mut shell = Shell {
             screen: Screen::SignIn(Form { creds: Credentials::default(), error: None }),
             connect,
+            sso: None,
             on_signed_in: None,
             on_signed_out: None,
             dark: false,
@@ -73,7 +102,7 @@ impl Shell {
     fn connecting(&mut self, creds: Credentials) -> Screen {
         match (self.connect)(&creds) {
             Ok(session) => Screen::Connecting { session: Box::new(session), creds },
-            Err(e) => Screen::SignIn(Form { creds, error: Some(e) }),
+            Err(e) => Screen::SignIn(Form { creds: Credentials { login_token: String::new(), ..creds }, error: Some(e) }),
         }
     }
 
@@ -89,14 +118,24 @@ impl Shell {
         let ctx = ui.ctx().clone();
         let tokens = if self.dark { Tokens::dark() } else { Tokens::light() };
         let mut next: Option<Screen> = None;
+        // A single sign-on that finished (with a token) or stopped (with an error, empty if cancelled).
+        let mut sso_done: Option<Result<Credentials, (Credentials, String)>> = None;
         match &mut self.screen {
             Screen::SignIn(form) => {
                 tokens.apply(&ctx);
-                if let Some(action) = sign_in_form(ui, &tokens, form) {
+                if let Some(action) = sign_in_form(ui, &tokens, form, self.sso.is_some()) {
                     next = Some(match action {
                         FormAction::SignIn => {
                             let creds = form.creds.clone();
                             self.connecting_screen(creds)
+                        }
+                        FormAction::Sso => {
+                            let creds = form.creds.without_secrets();
+                            match self.sso.as_mut().map(|start| start(&creds)) {
+                                Some(Ok(poll)) => Screen::Sso { creds, poll, url: None },
+                                Some(Err(e)) => Screen::SignIn(Form { creds, error: Some(e) }),
+                                None => Screen::SignIn(Form { creds, error: Some("single sign-on isn't available here".into()) }),
+                            }
                         }
                         FormAction::Demo => Screen::Chat { app: Box::new(ChatApp::new(Session::demo())), creds: None },
                     });
@@ -106,8 +145,7 @@ impl Shell {
                 tokens.apply(&ctx);
                 session.pump();
                 if session.me.is_some() {
-                    let mut creds = creds.clone();
-                    creds.password.clear();
+                    let creds = creds.without_secrets();
                     if let Some(f) = self.on_signed_in.as_mut() {
                         f(&creds);
                     }
@@ -119,13 +157,31 @@ impl Shell {
                     LinkStatus::Offline(why) if why.starts_with("sign-in failed") => Some(why),
                     _ => None,
                 }) {
-                    let mut creds = creds.clone();
-                    creds.password.clear();
-                    next = Some(Screen::SignIn(Form { creds, error: Some(e) }));
+                    next = Some(Screen::SignIn(Form { creds: creds.without_secrets(), error: Some(e) }));
                 } else {
                     connecting_ui(ui, &tokens, &creds.user, &creds.homeserver);
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
                 }
+            }
+            Screen::Sso { creds, poll, url } => {
+                tokens.apply(&ctx);
+                match poll() {
+                    SsoPoll::Waiting => {}
+                    SsoPoll::Open(u) => {
+                        ctx.open_url(egui::OpenUrl::new_tab(&u));
+                        *url = Some(u);
+                    }
+                    SsoPoll::Token(t) => {
+                        let mut c = creds.clone();
+                        c.login_token = t;
+                        sso_done = Some(Ok(c));
+                    }
+                    SsoPoll::Failed(e) => sso_done = Some(Err((creds.clone(), e))),
+                }
+                if sso_done.is_none() && sso_ui(ui, &tokens, creds, url.as_deref()) {
+                    sso_done = Some(Err((creds.clone(), String::new())));
+                }
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
             Screen::Chat { app, creds } => {
                 app.utc_offset_minutes = self.utc_offset_minutes;
@@ -140,6 +196,11 @@ impl Shell {
                 }
             }
         }
+        match sso_done {
+            Some(Ok(creds)) => next = Some(self.connecting(creds)),
+            Some(Err((creds, e))) => next = Some(Screen::SignIn(Form { creds, error: (!e.is_empty()).then_some(e) })),
+            None => {}
+        }
         if let Some(n) = next {
             self.screen = n;
             ctx.request_repaint();
@@ -153,6 +214,7 @@ impl Shell {
 
 enum FormAction {
     SignIn,
+    Sso,
     Demo,
 }
 
@@ -181,7 +243,7 @@ fn heading(ui: &mut Ui, t: &Tokens) {
     ui.add_space(14.0);
 }
 
-fn sign_in_form(ui: &mut Ui, t: &Tokens, form: &mut Form) -> Option<FormAction> {
+fn sign_in_form(ui: &mut Ui, t: &Tokens, form: &mut Form, sso: bool) -> Option<FormAction> {
     let mut action = None;
     card(ui, t, |ui| {
         heading(ui, t);
@@ -224,6 +286,24 @@ fn sign_in_form(ui: &mut Ui, t: &Tokens, form: &mut Form) -> Option<FormAction> 
             form.error = None;
             action = Some(FormAction::SignIn);
         }
+        if sso {
+            ui.add_space(8.0);
+            let named = !form.creds.homeserver.trim().is_empty() && !form.creds.user.trim().is_empty();
+            let b = egui::Button::new(RichText::new("Sign in with single sign-on").color(t.strong))
+                .fill(t.main_bg)
+                .stroke(egui::Stroke::new(1.0, t.composer_border))
+                .corner_radius(7)
+                .min_size(vec2(ui.available_width(), 38.0));
+            if ui
+                .add_enabled(named, b)
+                .on_hover_text("Your organisation's sign-in page (Google, GitHub, Okta…) opens in your browser")
+                .on_disabled_hover_text("Enter your homeserver and username first")
+                .clicked()
+            {
+                form.error = None;
+                action = Some(FormAction::Sso);
+            }
+        }
         ui.add_space(10.0);
         ui.vertical_centered(|ui| {
             if ui.link("Try the demo workspace instead").on_hover_text("A sample team that runs entirely on this computer").clicked() {
@@ -246,4 +326,32 @@ fn connecting_ui(ui: &mut Ui, t: &Tokens, user: &str, homeserver: &str) {
         ui.add_space(6.0);
         ui.label(RichText::new("The first sign-in on a device sets up its encryption keys.").small().color(t.muted));
     });
+}
+
+/// The "continue in your browser" card. Returns true when the person cancels.
+fn sso_ui(ui: &mut Ui, t: &Tokens, creds: &Credentials, url: Option<&str>) -> bool {
+    let mut cancel = false;
+    card(ui, t, |ui| {
+        heading(ui, t);
+        ui.horizontal_wrapped(|ui| {
+            ui.spinner();
+            ui.label(RichText::new(format!("Continue signing in to {} in your browser…", creds.homeserver.trim())).color(t.text));
+        });
+        ui.add_space(6.0);
+        ui.label(RichText::new(format!("Sign in as {} there; ChatCraft continues once you're done.", creds.user.trim())).small().color(t.muted));
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if let Some(u) = url
+                && ui.link("Open the page again").clicked()
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(u));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    });
+    cancel
 }

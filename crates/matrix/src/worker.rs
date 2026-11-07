@@ -54,7 +54,19 @@ pub(crate) fn account(cfg: &MatrixConfig) -> String {
     )
 }
 
-/// Returns the client and whether this was a fresh password sign-in (a new device).
+/// Whether `typed` (`alice` or `@alice:example.org`) names the Matrix ID `mxid`.
+fn same_user(typed: &str, mxid: &str) -> bool {
+    let typed = typed.trim();
+    if typed.is_empty() {
+        false
+    } else if typed.starts_with('@') {
+        typed.eq_ignore_ascii_case(mxid)
+    } else {
+        mxid.trim_start_matches('@').split(':').next().is_some_and(|local| local.eq_ignore_ascii_case(typed))
+    }
+}
+
+/// Returns the client and whether this was a fresh sign-in (a new device).
 async fn sign_in(cfg: &MatrixConfig) -> R<(Client, bool)> {
     #[cfg(not(target_family = "wasm"))]
     std::fs::create_dir_all(&cfg.store_dir).map_err(|e| format!("{}: {e}", cfg.store_dir.display()))?;
@@ -92,10 +104,22 @@ async fn sign_in(cfg: &MatrixConfig) -> R<(Client, bool)> {
             Err(e) => log::warn!("saved session rejected ({e}); signing in again"),
         }
     }
-    if cfg.password.is_empty() {
+    if !cfg.login_token.is_empty() {
+        client.matrix_auth().login_token(&cfg.login_token).initial_device_display_name(&cfg.device_name).await.map_err(err)?;
+        // The identity provider decides who signed in; it must be the account this device's
+        // store is for.
+        let who = client.user_id().map(|u| u.to_string()).unwrap_or_default();
+        if !same_user(&cfg.user, &who) {
+            let _ = client.matrix_auth().logout().await;
+            drop(client);
+            forget_device(cfg).await;
+            return Err(format!("single sign-on signed you in as {who}, not {}; sign in with that username", cfg.user));
+        }
+    } else if cfg.password.is_empty() {
         return Err("no saved session for this account; a password is needed".into());
+    } else {
+        client.matrix_auth().login_username(&cfg.user, &cfg.password).initial_device_display_name(&cfg.device_name).await.map_err(err)?;
     }
-    client.matrix_auth().login_username(&cfg.user, &cfg.password).initial_device_display_name(&cfg.device_name).await.map_err(err)?;
     if let Some(session) = client.matrix_auth().session() {
         secrets.set("session", &serde_json::to_string(&session).map_err(err)?)?;
     }
@@ -1132,5 +1156,22 @@ pub(crate) async fn run(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_user;
+
+    #[test]
+    fn the_typed_username_must_match_who_signed_in() {
+        assert!(same_user("alice", "@alice:example.org"));
+        assert!(same_user(" Alice ", "@alice:example.org"));
+        assert!(same_user("@alice:example.org", "@alice:example.org"));
+        assert!(!same_user("@alice:other.org", "@alice:example.org"));
+        assert!(!same_user("bob", "@alice:example.org"));
+        assert!(!same_user("ali", "@alice:example.org"));
+        assert!(!same_user("", "@alice:example.org"));
+        assert!(!same_user("alice", ""));
     }
 }

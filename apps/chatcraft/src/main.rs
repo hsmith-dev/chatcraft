@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use chatcraft_engine::proto::{ClientFrame, PROTOCOL_VERSION};
 use chatcraft_engine::{Loopback, Session};
-use chatcraft_ui_egui::{Credentials, Shell, Start};
+use chatcraft_ui_egui::{Credentials, Shell, SsoPoll, Start};
 
 const USAGE: &str = "usage: chatcraft [--demo]
                  [--matrix https://homeserver --user NAME [--password PW]]
@@ -73,7 +73,7 @@ fn remembered() -> Option<Credentials> {
     let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(account_file()).ok()?).ok()?;
     let homeserver = v.get("homeserver")?.as_str()?.to_string();
     let user = v.get("user")?.as_str()?.to_string();
-    Some(Credentials { homeserver, user, password: String::new() })
+    Some(Credentials { homeserver, user, ..Credentials::default() })
 }
 
 fn remember(c: &Credentials) {
@@ -90,8 +90,22 @@ fn forget() {
 
 fn connect_matrix(c: &Credentials) -> Result<Session, String> {
     let store = chatcraft_matrix::default_store_dir(&c.homeserver, &c.user);
-    let link = chatcraft_matrix::MatrixTransport::connect(chatcraft_matrix::MatrixConfig::new(&c.homeserver, &c.user, &c.password, store))?;
+    let mut cfg = chatcraft_matrix::MatrixConfig::new(&c.homeserver, &c.user, &c.password, store);
+    cfg.login_token = c.login_token.clone();
+    let link = chatcraft_matrix::MatrixTransport::connect(cfg)?;
     Ok(Session::connect(Box::new(link), Loopback::hello(&c.user)))
+}
+
+/// Single sign-on in the system browser, back to a one-off listener on this computer.
+fn start_sso(c: &Credentials) -> Result<Box<dyn FnMut() -> SsoPoll>, String> {
+    use chatcraft_matrix::sso::{SsoEvent, SsoSignIn};
+    let mut sso = SsoSignIn::start(&c.homeserver)?;
+    Ok(Box::new(move || match sso.poll() {
+        None => SsoPoll::Waiting,
+        Some(SsoEvent::Open(url)) => SsoPoll::Open(url),
+        Some(SsoEvent::Token(t)) => SsoPoll::Token(t),
+        Some(SsoEvent::Failed(e)) => SsoPoll::Failed(e),
+    }))
 }
 
 struct App(Shell);
@@ -113,7 +127,7 @@ fn main() -> std::process::ExitCode {
     let start = if a.demo {
         Start::Session(Box::new(Session::demo()))
     } else if let Some(hs) = &a.matrix {
-        Start::Connect(Credentials { homeserver: hs.clone(), user: a.user.clone(), password: a.password.clone() })
+        Start::Connect(Credentials { homeserver: hs.clone(), user: a.user.clone(), password: a.password.clone(), ..Credentials::default() })
     } else if let Some(url) = &a.server {
         match chatcraft_net::NetTransport::connect(url) {
             Ok(link) => {
@@ -143,6 +157,7 @@ fn main() -> std::process::ExitCode {
         opts,
         Box::new(move |cc| {
             let mut shell = Shell::new(start, Box::new(connect_matrix));
+            shell.sso = Some(Box::new(start_sso));
             shell.on_signed_in = Some(Box::new(remember));
             shell.on_signed_out = Some(Box::new(forget));
             shell.dark = dark;

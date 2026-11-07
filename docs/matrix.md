@@ -1,6 +1,6 @@
 # Matrix and end-to-end encryption
 
-_Status: 2026-11-01 · revision 6 (web app)_
+_Status: 2026-11-01 · revision 7 (single sign-on)_
 
 ChatCraft speaks **Matrix**, the open, federated chat standard, instead of a protocol of its own
 (the direction proposed in storytold/artcraft#2138). Any Matrix homeserver works — Synapse,
@@ -18,6 +18,30 @@ chatcraft-cli run --matrix https://matrix.example.org --as alice \
 ```
 
 The password (`--password` or `CHATCRAFT_PASSWORD`) is needed only the first time on a device.
+
+### Single sign-on
+
+Homeservers that sign people in through an identity provider (Google, GitHub, a company's OIDC
+or SAML, CAS, or a Matrix Authentication Service) offer `m.login.sso`. On the sign-in screen,
+enter the homeserver and username and choose **Sign in with single sign-on**:
+
+- **Desktop**: ChatCraft listens once on `127.0.0.1` at a random port, opens the homeserver's
+  sign-in page in the system browser, and receives the short-lived, single-use login token
+  when the browser comes back (`crates/matrix/src/sso.rs`). It gives up after five minutes,
+  or when you cancel.
+- **Browser**: the page goes to the sign-in page itself and picks the token up from
+  `?loginToken=` when it comes back. The token is removed from the address bar straight away,
+  and only a sign-on this tab started is accepted (the pending account waits in
+  `sessionStorage`).
+- The token is exchanged with `m.login.token` for a new device. The identity provider decides
+  who signs in, so if that isn't the username you entered, the sign-in is undone: the device is
+  signed out and its store deleted.
+- A new account's cross-signing is set up automatically when the homeserver allows it without
+  confirmation (Synapse does for the first upload). Confirming in a browser (UIA fallback) isn't
+  supported yet. Verify the new device from another of your devices instead.
+
+Homeservers that only offer OAuth 2.0 / OIDC-native sign-in (MSC3861) without the `m.login.sso`
+compatibility layer aren't supported yet.
 
 ### In the browser
 
@@ -160,6 +184,20 @@ verification both ways (identical emoji, confirm, mismatch, trust after restart)
 reactions, thread replies and edits arrive decrypted; the homeserver's stored events contain no
 plaintext; and after a restart Bob's device restores from its store and still reads the history.
 Synapse runs only as an external test process; ChatCraft contains no Synapse code.
+
+`crates/matrix/tests/sso.rs` runs single sign-on against a homeserver with an identity provider
+(`CHATCRAFT_TEST_SSO_USER` is the account it signs everyone in as). `curl -L` plays the browser.
+The test checks sign-in, resuming without a token, that a token is single-use, and that signing
+in as someone else is refused and leaves no store behind. Locally, a stub CAS provider will do:
+it answers `/cas/login?service=S` with a redirect to `S&ticket=…` and `/cas/proxyValidate` with
+`<cas:authenticationSuccess><cas:user>carol</cas:user>…`. Point Synapse at it (test servers
+only):
+
+```yaml
+public_baseurl: "http://localhost:8008/"
+cas_config: { enabled: true, server_url: "http://127.0.0.1:8790/cas" }
+sso: { client_whitelist: ["http://127.0.0.1:"] }   # skip the confirmation page for local redirects
+```
 
 `cargo run -p chatcraft-matrix --example rooms -- <homeserver> <user> <store-dir>` prints what a
 store believes about an account's rooms (diagnostics).

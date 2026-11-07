@@ -69,7 +69,7 @@ command today ([docs/parity-checklist.md](docs/parity-checklist.md)).
 ## Quick start
 
 ```sh
-# Sign in to any Matrix homeserver (end-to-end encrypted private channels and DMs)
+# Sign in to any Matrix homeserver, by password or single sign-on (end-to-end encrypted private channels and DMs)
 cargo run --release -p chatcraft            # sign-in screen; the account is remembered
 
 # The built-in demo workspace (nothing leaves your machine)
